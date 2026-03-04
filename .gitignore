@@ -2,3 +2,10 @@
 .vscode
 .DS_Store
 .reference
+
+# Build outputs
+build-cross/
+build-docker/
+fpga/work/
+fpga/work125_14/
+fpga/.Xil/
