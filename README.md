@@ -22,12 +22,12 @@ This document describes the intended **end-state** of `rp_ads1278`: a Red Pitaya
 
 | Function | Red Pitaya side | ADS1278EVM side | Notes |
 | --- | --- | --- | --- |
-| **SPI clock** | E2 `SPI SCK` (Pin 5) | `SCLK` |  |
-| **SPI data in** | E2 `SPI MISO` (Pin 4) | `DOUT1` | TDM stream CH1..CH8 |
-| **ADC Clock** | RP GPIO output (line `TBD`) | `EXTCLK` | Clock ADC conversion |
+| **SPI clock** | E1 `exp_p_io[0]` (G17) | `SCLK` | Output |
+| **SPI data in** | E1 `exp_p_io[1]` (H16) | `DOUT1` | Input, TDM stream CH1..CH8 |
+| **ADC Clock** | E1 `exp_p_io[4]` (L14) | `EXTCLK` | Output, clock ADC conversion |
 | **Ground** | RP `GND` | EVM `GND` | Common reference |
-| **DRDY event** | RP GPIO input (line `TBD`) | /`DRDY_FSYNC` | Falling-edge trigger when data is ready |
-| **SYNC control** | RP GPIO output (line `TBD`) | /`SYNC` | Active-low pulse for resetting ADS1278 filters |
+| **DRDY event** | E1 `exp_p_io[2]` (J18) | /`DRDY_FSYNC` | Input, falling-edge trigger |
+| **SYNC control** | E1 `exp_p_io[3]` (K17) | /`SYNC` | Output, active-low reset pulse |
 
 ## DIN and CS handling
 
@@ -42,15 +42,18 @@ This document describes the intended **end-state** of `rp_ads1278`: a Red Pitaya
 - Fixed-position channel ordering (CH1..CH8 each frame)
 - External clock (CMOS clock signal provided by the RedPitaya)
 
-## RP GPIO assignment record (fill on target system)
+## RP FPGA expansion pin assignment
 
-Fill these with the exact GPIO mapping from your RP OS image.
+All signals are driven/sampled by FPGA PL logic via the E1 expansion connector.
+No Linux sysfs GPIOs are used for high-speed acquisition.
 
-| Role | sysfs GPIO number | Connection |
-| --- | --- | --- |
-| DRDY | `TBD` | EVM /`DRDY_FSYNC` -> RP input |
-| SYNC | `TBD` | RP output -> EVM /`SYNC` |
-| CLK | `TBD` | RP output -> EVM /`EXTCLK` |
+| Role | E1 Pin | Package Pin | Direction |
+| --- | --- | --- | --- |
+| SCLK | `exp_p_io[0]` | G17 | Output |
+| MISO | `exp_p_io[1]` | H16 | Input |
+| DRDY | `exp_p_io[2]` | J18 | Input |
+| SYNC | `exp_p_io[3]` | K17 | Output |
+| EXTCLK | `exp_p_io[4]` | L14 | Output |
 
 ## Clocking and data rate
 
