@@ -1,0 +1,19 @@
+---
+description: Project scope and reference context for rp_ads1278
+alwaysApply: true
+---
+
+# rp_ads1278 Scope
+
+## README.md
+
+`README.md` documents the **end state** of the `rp_ads1278` codebase. Use it as the source of truth for goals, architecture, signal mapping, and design intent.
+
+## .reference/
+
+The `.reference/` folder contains a reference codebase for another RedPitaya project (rpll). It is **very useful** for `rp_ads1278` because:
+
+- It implements the same three-layer **fpga/server/client** architecture
+- It contains RTL and TCL needed for the target RedPitaya board
+
+**Treat `.reference/` as read-only.** We are the authors of this reference code, so copy/paste from it into `fpga/`, `server/`, or `client/` as needed—but do not edit files inside `.reference/`.
