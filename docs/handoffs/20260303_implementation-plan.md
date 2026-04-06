@@ -1,351 +1,159 @@
-# rp_ads1278 — Detailed Implementation Plan
+# rp_ads1278 - Current Status and Revised Implementation Plan
 
-This document provides a systematic, agent-friendly plan to implement `rp_ads1278` by leveraging `.reference` (the rpll project) and filling in ADS1278-specific gaps. The plan is structured so that multiple agents can work in parallel or sequentially, with clear copy/adapt instructions and explicit gaps to fill.
+This handoff reflects the repository as it exists today. It replaces the earlier assumption that most FPGA work still needed to be created from scratch.
 
-**Source of truth**: `README.md` describes the end-state. `.reference` is read-only; copy and adapt into `fpga/`, `server/`, and `client/`.
-
----
-
-## Architecture Overview
-
-| Layer   | Role | Reference Source | rp_ads1278 Target |
-|---------|------|------------------|------------------|
-| **fpga**   | RTL + Vivado TCL; SPI acquisition, clocking, AXI memory map | `.reference/rpll_fpga/` | `fpga/` |
-| **server** | C program on RedPitaya ARM; maps FPGA memory, streams TCP frames | `.reference/rpll_server/esw/` | `server/` |
-| **client** | Python GUI; decodes frames, sends commands, plots | `.reference/rpll_client/` | `client/` |
+**Source of truth:** `README.md` describes the intended end-state. `.reference/` remains read-only and is still the best source for copying and adapting the missing `server/` and `client/` layers.
 
 ---
 
-## Phase 1: Project Scaffolding & Build Scripts
+## Summary
 
-**Objective**: Establish top-level structure and build/deploy scripts that reference `fpga/`, `server/`, and `client/`.
-
-### 1.1 Directories
-
-- Ensure `fpga/`, `server/`, and `client/` exist (they already have `.gitkeep`).
-
-### 1.2 Copy and Adapt Build Scripts
-
-| Script | Source | Adaptations |
-|--------|--------|-------------|
-| `fpga-build.sh` | `.reference/fpga-build.sh` | Set `FPGA_DIR="${FPGA_DIR:-$SCRIPT_DIR/fpga}"`. Remove `--variant` handling; use single bitstream name `ads1278`. Update `preflight_check` paths: `fpga/source/cfg_rp125_14/ads1278.tcl`, `fpga/source/system_design_bd_rp125_14/system.tcl`. Update `find_bitstream_path` to look for `ads1278.bit` / `ads1278.bit.bin`. |
-| `fpga-deploy.sh` | `.reference/fpga-deploy.sh` | Set `FPGA_DIR="${FPGA_DIR:-$SCRIPT_DIR/fpga}"`. Update `detect_default_bitstream` to look in `fpga/work125_14/rp_ads1278.runs/impl_1/` for `ads1278.bit.bin`. |
-| `server-build-cross.sh` | `.reference/server-build-cross.sh` | Set `SERVER_DIR="${SERVER_DIR:-$SCRIPT_DIR/server}"`. Remove `--variant` handling. |
-| `server-build-docker.sh` | `.reference/server-build-docker.sh` | Same `SERVER_DIR` and remove `--variant`. |
-| `server-deploy.sh` | `.reference/server-deploy.sh` | Update `auto_detect_binary` to check `$SCRIPT_DIR/build-cross/server`, `$SCRIPT_DIR/build-docker/server`, `$SCRIPT_DIR/server/server`. |
-| `systemd-service-deploy.sh` | `.reference/systemd-service-deploy.sh` | Adapt binary path and service name to `ads1278-server`. |
-
-### 1.3 Board Support
-
-- **Target**: rp125_14 only (Zynq-7010, Vivado 2017.2).
-- Remove rp250_12 from `get_board_work_dir`.
+- The repository already contains a substantial `fpga/` implementation.
+- The `server/` and `client/` layers described in `README.md` are still absent.
+- Root-level build and deploy scaffolding exists for FPGA and for a future server, but the full three-layer system has not yet been assembled or validated end to end.
 
 ---
 
-## Phase 2: FPGA Layer (`fpga/`)
+## Current Implementation Snapshot
 
-**Objective**: Create synthesizable logic for ADS1278 SPI acquisition, EXTCLK generation, DRDY/SYNC GPIO, and AXI memory map.
+### FPGA
 
-### 2.1 Copy Build Infrastructure
+The FPGA layer is the only part of the planned architecture that has real implementation today.
 
-| Item | Source | Destination | Adaptations |
-|------|--------|-------------|-------------|
-| `regenerate_project_and_bd.tcl` | `.reference/rpll_fpga/` | `fpga/` | Change `rpll.tcl` → `ads1278.tcl` in `board_cfg_script`. Change project/work dir names from `rpll` to `rp_ads1278` where applicable. |
-| `tcl/board_config_rp125_14.tcl` | `.reference/rpll_fpga/tcl/` | `fpga/tcl/` | Set `board_cfg_script` to `source/cfg_rp125_14/ads1278.tcl`, `board_bd_script` to `source/system_design_bd_rp125_14/system.tcl`. |
-| `tcl/create_project_common.tcl` | `.reference/rpll_fpga/tcl/` | `fpga/tcl/` | Copy as-is; minimal or no changes. |
-| `source/cfg_rp125_14/` | `.reference/rpll_fpga/source/cfg_rp125_14/` | `fpga/source/cfg_rp125_14/` | Create `ads1278.tcl` (adapted from `rpll.tcl`). |
-| `source/cons_rp125_14/` | `.reference/rpll_fpga/source/cons_rp125_14/` | `fpga/source/cons_rp125_14/` | Copy `clocks.xdc`, then adapt `ports.xdc` (see 2.5). |
-| `library/` | `.reference/rpll_fpga/library/` | `fpga/library/` | Copy `lib_src/my_cores_build_src/` (axi_cfg_register, axis_red_pitaya_adc, axis_constant). For ads1278, we may not need ADC/DAC; keep only what is used. |
+Implemented now:
 
-### 2.2 Minimal Block Design (Gap to Fill)
+- `fpga/rtl/red_pitaya_top.sv` integrates the PS wrapper, AXI4-Lite bus, and ADS1278 slave.
+- `fpga/rtl/ads1278_axi_slave.sv` exposes a register block for CH1..CH8, `STATUS`, `CTRL`, and `EXTCLK_DIV`.
+- `fpga/rtl/ads1278_acq_top.v` wires together the SPI TDM receiver, EXTCLK generator, and SYNC pulse generator.
+- `fpga/rtl/ads1278_spi_tdm.v` implements DRDY-triggered 192-bit TDM capture, sampling on SCLK rising edges.
+- `fpga/rtl/ads1278_extclk_gen.v` and `fpga/rtl/ads1278_sync_pulse.v` implement clock generation and SYNC pulsing.
+- `fpga/source/system_design_bd_rp125_14/system.tcl` maps the AXI GP0 register block at `0x40000000` with a `0x1000` byte range.
+- `fpga/source/cons_rp125_14/ports.xdc` constrains the README signal mapping on E1 P-side pins:
+  - `exp_p_io[0]` = SCLK
+  - `exp_p_io[1]` = MISO
+  - `exp_p_io[2]` = DRDY
+  - `exp_p_io[3]` = SYNC
+  - `exp_p_io[4]` = EXTCLK
+- `fpga/source/cfg_rp125_14/ads1278.tcl` and the repo-root FPGA scripts provide the current build/deploy entry points.
 
-The rpll block design is complex (PLLs, servos, scope, DAC, PWM). For rp_ads1278 we need a **minimal** design:
+### Server
 
-1. **Retain**:
-   - Zynq Processing System 7 (PS7)
-   - AXI interconnect(s)
-   - Clock and reset (FCLK_CLK0, proc_sys_reset)
-   - Expansion connector pins for SPI, GPIO
+The server layer is not implemented yet.
 
-2. **Remove**:
-   - axis_red_pitaya_adc, axis_red_pitaya_dac (unless needed for something else)
-   - PLLs, Servos, scope_MHz, PWM_IF, DAC_IF
-   - laser_lock, all_pipes, cfg_regs_distributor (rpll-specific)
+Current state:
 
-3. **Add** (new RTL + BD integration):
-   - **ads1278_acq** (or similar) hierarchical block containing:
-     - SPI TDM receiver (reads 8×24-bit from DOUT1 on SCLK edges, triggered by DRDY)
-     - EXTCLK generator (configurable divider from 125 MHz, output 100 kHz–27 MHz)
-     - SYNC pulse generator (AXI-triggerable one-shot)
-     - AXI-lite registers for: 8×24-bit channel data, status, control
+- `server-build-cross.sh`, `server-build-docker.sh`, `server-deploy.sh`, and `server.Dockerfile` exist.
+- There is no `server/` source tree in the repository.
+- There is no `Makefile`, C source, MMIO logic, TCP protocol implementation, or command parser.
 
-**Strategy**: Start from a minimal RedPitaya block design (e.g. PS7 + GPIO + one AXI peripheral). Reference `.reference/rpll_fpga/source/system_design_bd_rp125_14/system.tcl` for PS7 setup and address segments, but build a new `system.tcl` from scratch or by stripping rpll down to PS7 + interconnect + new ads1278 block.
+### Client
 
-### 2.3 RTL Modules to Create (Gaps)
+The client layer is not implemented yet.
 
-| Module | Purpose | Reference / Notes |
-|--------|---------|--------------------|
-| `ads1278_spi_tdm.v` | SPI slave-style receiver: on falling edge of DRDY, clock in 8×24 bits from MISO (DOUT1) using SCLK. Output 8×24-bit register bank. | ADS1278 datasheet: TDM order CH1..CH8, MSB first. Can adapt `.reference/rpll_fpga/source/rtl/spi_master.v` concepts but ADS1278 is **slave**; we generate SCLK and read MISO. |
-| `ads1278_extclk_gen.v` | Divides 125 MHz to produce EXTCLK (100 kHz–27 MHz). AXI register sets divider. | Use counter or Xilinx Clocking Wizard. |
-| `ads1278_sync_pulse.v` | One-shot: write 1 to AXI register → drive SYNC low for N cycles, then high. | Simple FSM. |
-| `ads1278_acq_top.v` | Top-level: instantiates spi_tdm, extclk_gen, sync_pulse; AXI-lite interface for registers. | Wraps all; connects to block design. |
+Current state:
 
-**ADS1278 SPI timing** (high-res, TDM, DOUT1):
-
-- Data rate = EXTCLK/512.
-- After DRDY falls, data is output on DOUT1, MSB first, 24 bits per channel, CH1..CH8.
-- SCLK must be provided by FPGA; sample MISO on appropriate edge (datasheet specifies setup/hold).
-- Total bits per frame: 8×24 = 192 bits.
-
-### 2.4 AXI Memory Map (Gap)
-
-Define addresses for rp125_14 (0x4xxxxxxx range typical for PL peripherals):
-
-| Register | Offset | Width | R/W | Description |
-|----------|--------|-------|-----|-------------|
-| CH1..CH8 | 0x00–0x1C | 32 each | R | 24-bit channel data (upper bits reserved) |
-| STATUS   | 0x20    | 32     | R | DRDY seen, overflow, etc. |
-| CTRL     | 0x24    | 32     | R/W | SYNC trigger (write 1), EXTCLK divider |
-| EXTCLK_DIV | 0x28  | 32     | R/W | Divider for 125 MHz → EXTCLK |
-
-Exact addresses must match `server/memory_map.h`.
-
-### 2.5 Pin Constraints (`ports.xdc`)
-
-Per README signal mapping:
-
-| Function | Red Pitaya | ADS1278EVM | XDC Notes |
-|----------|------------|------------|-----------|
-| SPI SCK  | E2 Pin 5   | SCLK       | Use expansion connector. RedPitaya E2: check pinout for Pin 5. |
-| SPI MISO | E2 Pin 4  | DOUT1      | Input from ADC. |
-| EXTCLK   | GPIO out   | EXTCLK     | RP GPIO (TBD sysfs number) → physical pin. |
-| DRDY     | GPIO in    | /DRDY_FSYNC| Falling edge = data ready. |
-| SYNC     | GPIO out   | /SYNC      | Active-low pulse. |
-
-**Reference**: `.reference/rpll_fpga/source/cons_rp125_14/ports.xdc` uses `exp_p_tri_*`, `exp_n_tri_*` for expansion. RedPitaya E1 pinout must be consulted for exact package pins. The README specifies E1 expansion connector for all.
-
-**Action**: Create `fpga/sdc/red_pitaya.xdc` with:
-- SPI SCK, MISO, DRDY, SYNC, EXTCLK on correct expansion pins
-
-### 2.6 Project Config (`ads1278.tcl`)
-
-Create `fpga/source/cfg_rp125_14/ads1278.tcl` from `rpll.tcl`:
-
-- Replace all `rpll` references with `rp_ads1278`.
-- Replace source file list: remove rpll RTL (laser_lock, all_pipes, etc.); add `ads1278_acq_top.v`, `ads1278_spi_tdm.v`, `ads1278_extclk_gen.v`, `ads1278_sync_pulse.v`.
-- Set top to `system_wrapper` (from block design).
-- Keep constraints: `clocks.xdc`, `ports.xdc`.
+- There is no `client/` source tree in the repository.
+- No frame decoder, GUI, logging path, or tests are present.
 
 ---
 
-## Phase 3: Server Layer (`server/`)
+## What This Means For Planning
 
-**Objective**: C program that maps FPGA memory, reads 8-channel data, streams frames over TCP, handles commands.
+Earlier handoff assumptions are now outdated in two important ways:
 
-### 3.1 Copy Base Server
-
-| File | Source | Action |
-|------|--------|--------|
-| `server.c` | `.reference/rpll_server/esw/` | Copy; heavily modify (see 3.3). |
-| `server.h` | `.reference/rpll_server/esw/` | Copy; strip rpll-specific declarations. |
-| `memory_map.c` | `.reference/rpll_server/esw/` | Copy; rewrite for ads1278 map. |
-| `memory_map.h` | `.reference/rpll_server/esw/` | Copy; rewrite for ads1278 map. |
-| `rpdevmem.c` | `.reference/rpll_server/esw/` | Copy as-is (generic /dev/mem mapping). |
-| `cmd_parse.c`, `cmd_parse.h` | `.reference/rpll_server/esw/` | Copy; simplify for ads1278 commands. |
-| `red_pitaya_identify.c`, `red_pitaya_identify.h` | `.reference/rpll_server/esw/` | Copy as-is. |
-| `Makefile` | `.reference/rpll_server/esw/` | Copy; remove fft_peak, real_fft_1024, rand; add only needed objects. |
-
-**Remove**: `fft_peak.c`, `fft_peak.h`, `real_fft_1024.c`, `real_fft_1024.h`, `rand.c`, `rand.h`.
-
-### 3.2 Protocol (`rp_protocol.h`)
-
-Create `server/rp_protocol.h` (or copy and modify):
-
-```c
-#define RP_DEFAULT_PORT 1001
-#define RP_FRAME_SIZE_DOUBLES 9   /* counter + 8 channels */
-#define RP_FRAME_SIZE_BYTES (RP_FRAME_SIZE_DOUBLES * 8)
-#define RP_CAP_PREFIX "RP_CAP:"
-#define RP_CAP_ADS1278 "ads1278"
-#define RP_CMD_ADDR_MAX 8
-```
-
-Frame layout: `[counter, ch1, ch2, ch3, ch4, ch5, ch6, ch7, ch8]` (9 doubles minimum).
-
-### 3.3 Memory Map (`memory_map.h` / `memory_map.c`)
-
-Define the AXI peripheral base in the `memory_map` enum (so it gets mapped to `/dev/mem`):
-
-```c
-enum memory_map {
-    ADS1278_ACQ_BASE,  /* Single AXI peripheral base for ads1278 */
-    MEMORY_MAP_COUNT
-};
-```
-
-Then define the register byte offsets within that mapped peripheral:
-
-```c
-#define ADS1278_CH1_OFFSET       0x00
-#define ADS1278_STATUS_OFFSET    0x20
-#define ADS1278_CTRL_OFFSET      0x24
-#define ADS1278_EXTCLK_DIV_OFFSET 0x28
-```
-
-Addresses in `MEMORY_MAP_ADDRESS` must match FPGA AXI base addresses. Use `red_pitaya_identify` to select RP_125_14 addresses.
-
-### 3.4 Acquisition Loop (`server.c`)
-
-Replace rpll loop with:
-
-1. **Poll or interrupt**: Poll `ADS1278_STATUS_OFFSET` for data-ready flag, or use GPIO UIO/irq for DRDY (optional).
-2. **Read channels**: Read 8×32-bit starting at `ADS1278_CH1_OFFSET`.
-3. **Convert to doubles**: 24-bit signed → double (scale as needed, e.g. ±FS/2^23).
-4. **Build frame**: `[counter, ch1, ..., ch8]`.
-5. **Send**: `send(sock_client, frame, RP_FRAME_SIZE_BYTES, MSG_NOSIGNAL)`.
-6. **Commands**: `start_measuring` (addr 0), `SYNC` trigger (addr 1), `EXTCLK_DIV` (addr 2), etc.
-
-Remove: `add_fft_to_frame`, `add_pll_to_frame`, `add_servo_to_frame`, `add_white_noise`, `pll_logger_*`, `trigger_scope_read`.
-
-### 3.5 Command Parsing
-
-Simplify `process_command` to handle:
-
-- Addr 0: start/stop measuring
-- Addr 1: SYNC pulse (write 1)
-- Addr 2: EXTCLK divider value
+1. Phase 2 is no longer a blank-slate FPGA task. Most of the intended RTL and integration work already exists.
+2. The highest-value development work is now software integration: first a minimal server, then a minimal client, then full hardware bring-up.
 
 ---
 
-## Phase 4: Client Layer (`client/`)
+## Revised Phases
 
-**Objective**: Python GUI to connect, visualize 8 channels, send commands, log data.
+### Phase 1: Close FPGA Validation Gaps
 
-### 4.1 Copy Base Client
+Before building higher layers, confirm the current FPGA work is reproducible and documented.
 
-| Item | Source | Action |
-|------|--------|--------|
-| `main.py` | `.reference/rpll_client/` | Copy; adapt imports and entry. |
-| `rp_protocol.py` | `.reference/rpll_client/` | Copy; update constants to match server. |
-| `acquire.py` | `.reference/rpll_client/` | Copy; adapt frame schema and corruption check. |
-| `frame_schema.py` | `.reference/rpll_client/` | **Rewrite** for 8-channel + counter. |
-| `data_models.py` | `.reference/rpll_client/` | Adapt for time-series channels. |
-| `setup.py` | `.reference/rpll_client/` | Copy; change package name to `rp_ads1278_client` or similar. |
-| `global_params.py` | `.reference/rpll_client/` | Copy; simplify. |
-| `layout.py`, `gui.py`, `widgets.py` | `.reference/rpll_client/` | Copy; heavily modify (see 4.3). |
-| `config.json` | `.reference/rpll_client/` | Copy; adapt. |
-| `tests/` | `.reference/rpll_client/tests/` | Copy; update tests for new schema. |
+Tasks:
 
-### 4.2 Frame Schema (`frame_schema.py`)
+- Run and record a clean FPGA build path for `rp125_14`.
+- Resolve the `fpga-build.sh` preflight expectation that `fpga/library/lib_src/my_cores_build_src` exists even though `make_cores.tcl` is currently a no-op.
+- Confirm the intended Vivado version for the checked-in TCL flow and document whether it is `2017.2`, `2020.1`, or both.
+- Verify register semantics and control behavior against the hardware notes:
+  - `CTRL[1]` enable
+  - `CTRL[0]` SYNC trigger
+  - `EXTCLK_DIV`
+  - `STATUS[0]` new data
+  - `STATUS[1]` overflow
+  - `STATUS[31:16]` frame count
 
-```python
-FRAME_SIZE_DOUBLES = 9  # counter + 8 channels
-FRAME_SIZE_BYTES = FRAME_SIZE_DOUBLES * 8
-FRAME_COUNTER = 0
-CH1, CH2, CH3, CH4, CH5, CH6, CH7, CH8 = 1, 2, 3, 4, 5, 6, 7, 8
-```
+### Phase 2: Implement the Minimal Server
 
-Remove FFT-related constants. Update `check_frame_corruption` or replace with a simple sanity check (e.g. counter monotonic, channels in expected range).
+Create the missing `server/` tree by copying and simplifying from `.reference/rpll_server/esw/`.
 
-### 4.3 GUI Redesign
+Minimum viable server responsibilities:
 
-**Remove**: FFT spectrum plots, PLL I/Q, servo sliders, laser lock controls.
+- Map the FPGA register block at `0x40000000`.
+- Poll `STATUS` and read CH1..CH8.
+- Convert 24-bit samples into a host-friendly frame format.
+- Expose TCP streaming and a small command surface for enable, SYNC, and `EXTCLK_DIV`.
+- Match deployed binary naming used by `server-deploy.sh` (`ads1278-server`).
 
-**Add**:
+### Phase 3: Implement the Minimal Client
 
-- **8-channel strip chart**: One plot with 8 traces. Use `pyqtgraph.PlotWidget` / `PlotDataItem`.
-- **Controls**: Connect/Disconnect, Start/Stop, EXTCLK frequency (or divider), SYNC button.
-- **Status**: Connection state, frame rate, last counter.
+Create the missing `client/` tree by adapting `.reference/rpll_client/`.
 
-Reference `gui.py` and `layout.py` structure.
+Minimum viable client responsibilities:
 
-### 4.4 Data Logging (`acquire.py`)
+- Connect to the server and verify a capability string or protocol handshake.
+- Decode frames containing one counter plus eight channels.
+- Provide a simple live plot and basic logging/export.
+- Expose controls for start/stop, SYNC, and `EXTCLK_DIV`.
 
-- Ensure `RPConnection` and `read_frame` work with new `FRAME_SIZE_BYTES`.
-- Logging: write 8-channel + timestamp to CSV. Column headers: `cnt, ch1, ch2, ..., ch8`.
-- Header should contain the sampling frequency (to generate a timebase from `cnt`) and "t0" timestamp using client OS time.
+### Phase 4: Hardware Bring-up
 
-### 4.5 Connect Sequence
+Once the FPGA build and server/client exist:
 
-- Read capability line `RP_CAP:ads1278`.
-- Send `start_measuring` (addr 0, value 1) instead of rpll-specific commands.
-- Remove or adapt rpll init commands (0x01000001, 0x00000001) to ads1278 equivalents.
+- Load the bitstream.
+- Run the server on the Red Pitaya.
+- Connect the client.
+- Verify channel ordering, rate control, SYNC behavior, and overflow behavior on real hardware.
 
 ---
 
-## Phase 5: Integration & Verification
+## Relevant Files
 
-### 5.1 Build Order
-
-1. **FPGA**: `./fpga-build.sh --target rp125_14` (after Phase 2 complete).
-2. **Server**: `./server-build-cross.sh`.
-3. **Client**: `cd client && pip install -e .`
-
-### 5.2 Deploy
-
-- `./fpga-deploy.sh --target rp125_14 --ip <RP_IP>`
-- `./server-deploy.sh --ip <RP_IP>`
-
-### 5.3 Hardware Setup
-
-- Wire ADS1278EVM per README table.
-- Fill GPIO table in README with actual sysfs numbers once known.
-- EVM straps: high-res, SPI, TDM DOUT1, external clock.
-
-### 5.4 Test
-
-- Run server on RedPitaya.
-- Run client: `python main.py`, connect, start.
-- Verify 8 channels update in real time.
-- Test SYNC, EXTCLK change.
-- Test logging to file.
+| Area | File |
+|------|------|
+| End-state definition | `README.md` |
+| SPI timing notes | `ADS1278_SPI.md` |
+| AXI GP0 notes | `docs/notes/AXI_GP0_REGISTER_MAP_HOWTO.md` |
+| FPGA top-level | `fpga/rtl/red_pitaya_top.sv` |
+| FPGA register block | `fpga/rtl/ads1278_axi_slave.sv` |
+| FPGA acquisition wrapper | `fpga/rtl/ads1278_acq_top.v` |
+| FPGA SPI TDM logic | `fpga/rtl/ads1278_spi_tdm.v` |
+| FPGA build entry point | `fpga-build.sh` |
+| Future server build scaffolding | `server-build-cross.sh`, `server-build-docker.sh`, `server-deploy.sh` |
+| Reference codebase | `.reference/` |
 
 ---
 
-## Reference File Map (Quick Lookup)
+## Success Criteria
 
-| Need | Location in .reference |
-|------|-------------------------|
-| FPGA build script | `fpga-build.sh` |
-| FPGA block design (PS7, interconnects) | `rpll_fpga/source/system_design_bd_rp125_14/system.tcl` |
-| Board config | `rpll_fpga/tcl/board_config_rp125_14.tcl` |
-| Project TCL | `rpll_fpga/source/cfg_rp125_14/rpll.tcl` |
-| Port constraints | `rpll_fpga/source/cons_rp125_14/ports.xdc` |
-| SPI master (adapt for ADS1278) | `rpll_fpga/source/rtl/spi_master.v` |
-| Server main loop | `rpll_server/esw/server.c` |
-| Memory map | `rpll_server/esw/memory_map.h` |
-| Protocol | `rpll_server/rp_protocol.h` |
-| Client frame schema | `rpll_client/frame_schema.py` |
-| Client acquire | `rpll_client/acquire.py` |
-| Client GUI | `rpll_client/gui.py`, `layout.py` |
+The project reaches the README architecture only when all of the following are true:
+
+- FPGA build is reproducible and documented.
+- A `server/` implementation exists and can stream frames from the MMIO register block.
+- A `client/` implementation exists and can display and log incoming data.
+- End-to-end acquisition is exercised on hardware with the ADS1278EVM wiring described in `README.md`.
 
 ---
 
-## GPIO Assignment (TBD)
+## Updated Checklist
 
-README specifies:
-
-| Role | E1 Pin / Package Pin | Connection |
-|------|------------|------------|
-| DRDY | TBD | EVM /DRDY_FSYNC → RP input |
-| SYNC | TBD | RP output → EVM /SYNC |
-| CLK  | TBD | RP output → EVM EXTCLK |
-| SCLK | TBD | RP output -> EVM SCLK |
-| MISO | TBD | EVM DOUT1 -> RP input |
-
-**Note**: All signals are generated in FPGA and routed to the E1 expansion connector. No Linux GPIOs are used for high-speed acquisition.
-
----
-
-## Checklist for Agents
-
-- [x] Phase 1: Build scripts copied and adapted
-- [x] Phase 2.1: FPGA build infra copied
-- [x] Phase 2.2: Minimal block design created
-- [x] Phase 2.3: ads1278 RTL modules implemented
-- [x] Phase 2.4: AXI memory map defined
-- [x] Phase 2.5: ports.xdc with SPI and GPIO pins
-- [x] Phase 2.6: ads1278.tcl project config
-- [ ] Phase 3.1–3.5: Server adapted
-- [ ] Phase 4.1–4.5: Client adapted
-- [ ] Phase 5: Integration tested
+- [x] FPGA build/deploy scaffolding exists
+- [x] FPGA block design TCL exists
+- [x] FPGA RTL for acquisition, control, and AXI register access exists
+- [x] E1 pin mapping is implemented in constraints and top-level RTL
+- [ ] FPGA build flow has been cleanly validated and documented
+- [ ] `server/` source tree implemented
+- [ ] `client/` source tree implemented
+- [ ] End-to-end hardware integration tested
