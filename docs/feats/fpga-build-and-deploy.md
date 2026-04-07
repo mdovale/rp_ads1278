@@ -28,6 +28,7 @@ Current script-level behavior:
 | Synthesis top | The intended synthesis top is `red_pitaya_top`, not the block-design wrapper |
 | Output location | Bitstreams are expected under `fpga/work125_14/rp_ads1278.runs/impl_1/` |
 | Output naming | The build script normalizes outputs to `ads1278.bit` and `ads1278.bit.bin` when possible |
+| Build result validation | The build script fails if the normalized `ads1278.bit` and `ads1278.bit.bin` outputs are not present at the end of the flow |
 | Deployment format | Deployment requires `.bit.bin` format for Red Pitaya OS 2.x+ FPGA Manager |
 | Deployment method | Deploy copies the bitstream to the board over `scp` and optionally programs it with `fpgautil -b` |
 
@@ -36,7 +37,7 @@ Current build-script assumptions:
 - If no explicit Vivado path is given, `fpga-build.sh` looks for `vivado` in `PATH`.
 - For `rp125_14`, the local fallback Vivado path is `/opt/Xilinx/Vivado/2017.2/bin/vivado`.
 - The block-design TCL itself was generated with Vivado `2020.1` and only warns when versions differ.
-- The build script defaults to custom core generation, even though the in-tree custom-core setup is not complete.
+- The default supported build path skips custom core generation because the repo does not currently contain the optional `fpga/library/lib_src/my_cores_build_src` tree.
 
 Current deployment-script assumptions:
 
@@ -79,21 +80,21 @@ The deployment flow is simpler:
 
 ## Known risk areas
 
-- `fpga-build.sh` defaults to `--make-cores`, but the repo only contains a no-op `make_cores.tcl` and does not contain the required `fpga/library/lib_src/my_cores_build_src` directory. In the current tree, that causes preflight failure unless the script or tree is adjusted.
+- The optional `--make-cores` path still depends on repo content that is not currently checked in, so it should be treated as unsupported unless that source tree is added deliberately.
 - The build flow is present in-tree, but this repo does not yet record a known-good clean build result.
 - The local build script assumes Vivado `2017.2` for `rp125_14`, while `fpga/source/system_design_bd_rp125_14/system.tcl` declares itself a `2020.1` generated script and only warns on mismatch.
-- `fpga-deploy.sh` performs an optional `devmem` verification read at `0x42000000`, which does not match the current AXI GP0 register base documented elsewhere for this design (`0x40000000`).
 - Deployment requires `.bit.bin`; a raw `.bit` is rejected by the deploy script.
 
 ## Manual QA
 
 Useful current checks for this feature area:
 
-- Confirm `./fpga-build.sh --target rp125_14` reaches preflight successfully.
+- Confirm `./fpga-build.sh --target rp125_14` reaches preflight successfully from the default repo state.
 - Confirm the produced output directory is `fpga/work125_14/rp_ads1278.runs/impl_1/`.
 - Confirm both `ads1278.bit` and `ads1278.bit.bin` exist after a successful build.
 - Confirm `./fpga-deploy.sh --target rp125_14 --ip <host>` can copy and program the `.bit.bin`.
 - After deployment, confirm FPGA Manager reports `operating`.
+- If `devmem` is available on the board, confirm reads at `0x40000000` succeed after programming.
 
 ## Key files
 

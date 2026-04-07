@@ -1,6 +1,6 @@
 # FPGA Register Map
 
-This doc covers the current MMIO register block exposed by the FPGA acquisition path in `rp_ads1278`. It is the software-facing contract between the Red Pitaya PS and the ADS1278 acquisition logic, and it is the main interface a future `server/` implementation will consume.
+This doc covers the current MMIO register block exposed by the FPGA acquisition path in `rp_ads1278`. It is the software-facing contract between the Red Pitaya PS and the ADS1278 acquisition logic, and it is the main interface the current `server/` implementation consumes.
 
 ## Goal
 
@@ -9,7 +9,7 @@ Define the current register-level behavior that software can rely on when readin
 ## Scope
 
 - In scope: the AXI GP0 register aperture, register offsets, read and write behavior, reset values, and the RTL blocks that own those registers.
-- Out of scope: the network protocol, host-side client behavior, and any future DMA-based transport. This doc describes the current MMIO register block only.
+- Out of scope: the network protocol, host-side client behavior, and any later DMA-based transport. This doc describes the current MMIO register block only.
 
 ## User-facing behavior
 

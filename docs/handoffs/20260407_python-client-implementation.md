@@ -2,6 +2,8 @@
 
 This handoff turns the broad "implement a minimal client" guidance into a concrete plan for building the missing `client/` layer against the now-implemented server protocol.
 
+> Historical note: this handoff predates the in-tree `client/` implementation. For the current client behavior and usage, see `client/README.md` and `docs/feats/client.md`.
+
 ## Summary
 
 - The FPGA layer is implemented and documented well enough to support software bring-up.

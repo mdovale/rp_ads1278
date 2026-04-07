@@ -9,11 +9,11 @@ Provide one entry point for understanding the current FPGA layer: how it fits in
 ## Scope
 
 - In scope: the current FPGA layer as a system, including project generation, board IO ownership, acquisition behavior, top-level signal mapping, and the MMIO surface exposed to the PS.
-- Out of scope: the future TCP server protocol, host GUI behavior, and any Linux-side abstractions above the raw MMIO contract, plus any functionality that is planned in `README.md` but not yet implemented in the repo.
+- Out of scope: the TCP server protocol details, host GUI behavior, and any Linux-side abstractions above the raw MMIO contract, plus any bring-up claim that has not yet been validated on real hardware.
 
 ## Overview
 
-The current repository has real implementation in `fpga/` and no in-tree implementation yet for `server/` or `client/`. That makes the FPGA layer the present source of truth for:
+The current repository now has in-tree implementation for `fpga/`, `server/`, and `client/`. The FPGA layer remains the source of truth for:
 
 - board-facing ADS1278 digital wiring
 - acquisition timing and channel latching behavior
@@ -25,7 +25,7 @@ At a high level, the FPGA layer does four things today:
 1. Drives the external ADS1278 signals on the Red Pitaya E1 expansion connector.
 2. Generates `EXTCLK` and `SYNC`, and clocks in the ADS1278 TDM stream on `DOUT1`.
 3. Latches eight 24-bit channels and packs acquisition state into a small AXI4-Lite register block.
-4. Exposes that register block to the PS over AXI GP0 so a future server can read and control the design.
+4. Exposes that register block to the PS over AXI GP0 so the current `server/` can read and control the design.
 
 ## User-facing behavior
 
@@ -49,9 +49,8 @@ What is implemented today:
 
 What is not implemented today:
 
-- no in-repo `server/` implementation
-- no in-repo `client/` implementation
 - no recorded end-to-end validated hardware bring-up result
+- no recorded boot-cycle validation result for the `systemd` service path
 
 ## Architecture
 
@@ -67,7 +66,8 @@ The FPGA layer is organized around a small set of top-level responsibilities:
 The architectural boundary to keep in mind is:
 
 - FPGA owns signal timing, sampling, latching, and MMIO exposure.
-- A future server will own PS-side MMIO access, sample interpretation, and network transport.
+- The current `server/` owns PS-side MMIO access, sample interpretation, and network transport.
+- The current `client/` owns host-side protocol decoding, plotting, and CSV logging.
 
 ## Key files
 

@@ -57,7 +57,7 @@ No Linux sysfs GPIOs are used for high-speed acquisition.
 
 ## Clocking and data rate
 
-The data rate of the ADS1278EVM in high-resolution mode is `EXTCLK`/512, where `EXTCLK` is anywhere between 100 and 27000 kSa/s.
+The data rate of the ADS1278EVM in high-resolution mode is `EXTCLK`/512, where `EXTCLK` is anywhere between `100 kHz` and `27 MHz`.
 
 Some examples:
 
@@ -69,4 +69,4 @@ Some examples:
 | 10 MHz | 19,531.3 Hz |
 | 27 MHz | 52,734.4 Hz |
 
-The `EXTCLK` in the ADS1278EVM boards is an SMA connector. It is ackward to connect an RP GPIO pin to an SMA connector, but we will try it.
+The `EXTCLK` input on the ADS1278EVM is an SMA connector. It is awkward to connect an RP GPIO pin to an SMA connector, but we will try it.

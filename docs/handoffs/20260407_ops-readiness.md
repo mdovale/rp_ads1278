@@ -2,12 +2,35 @@
 
 This handoff captures the current state of `rp_ads1278` after an audit of `fpga/`, `server/`, `client/`, and the docs, with the specific goal of getting the project from "implemented enough for software bring-up" to "credible for repeatable lab ops on real hardware."
 
+> Update after follow-up repo fixes: the in-tree gaps called out here around `fpga-build.sh`, `fpga-deploy.sh`, stale feature docs, the client divider UI, and the `README.md` clock wording have been addressed. The remaining ops-readiness gap is hardware validation and recording one known-good bring-up path.
+
 ## Summary
 
 - The three layers are mostly aligned with the intended architecture in `README.md`.
 - `server/` and `client/` are implemented, locally testable, and agree on the current v1 TCP protocol.
-- The main blockers to ops readiness are FPGA build and deploy reproducibility, stale docs, and the lack of a recorded end-to-end hardware validation run.
-- The next session should focus on proving the FPGA-to-board bring-up path and cleaning up docs, not redesigning the client or server.
+- The repo-side blockers around FPGA build defaults, deploy verification, and stale current-state docs have now been closed in-tree.
+- The main remaining blocker to ops readiness is the lack of a recorded end-to-end hardware validation run.
+- The next session should focus on proving the FPGA-to-board bring-up path on real hardware, not redesigning the client or server.
+
+## Follow-up update
+
+The following gaps from the original audit are now resolved in-tree:
+
+- `fpga-build.sh` now defaults to the supported `--skip-cores` path instead of requiring missing custom-core sources.
+- `fpga-build.sh` now fails if the expected normalized outputs `ads1278.bit` and `ads1278.bit.bin` are not produced.
+- `fpga-deploy.sh` now verifies MMIO accessibility at `0x40000000`, which matches the block design, server code, and MMIO docs.
+- The Python client now prevents `EXTCLK_DIV` values below the server minimum of `3`.
+- `README.md` and the main FPGA/server protocol docs now describe the current repo truthfully instead of using stale "future server/client" wording.
+- The older planning handoffs now carry short historical notes so they are less likely to be mistaken for current-state docs.
+
+What is still not proven in this repo session:
+
+- a known-good clean Vivado build result on a supported toolchain,
+- a successful bitstream deploy to a Red Pitaya,
+- MMIO accessibility verified on real hardware after programming,
+- server startup on the board,
+- Python client validation against the real board/server path,
+- boot-cycle validation of the `systemd` startup path.
 
 ## Why this handoff exists
 

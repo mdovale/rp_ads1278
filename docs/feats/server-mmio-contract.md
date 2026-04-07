@@ -4,7 +4,7 @@ This doc describes the current memory-mapped interface the `server/` process use
 
 ## Goal
 
-Define the current PS-to-FPGA MMIO interface clearly enough that the existing `server/` implementation, bring-up tools, and future client work can rely on the same register-level behavior without rediscovering RTL details from scratch.
+Define the current PS-to-FPGA MMIO interface clearly enough that the existing `server/` implementation, bring-up tools, and current client-facing docs can rely on the same register-level behavior without rediscovering RTL details from scratch.
 
 ## Scope
 
@@ -97,7 +97,7 @@ That means the server contract is intentionally simple today:
 
 ## Manual QA
 
-Useful checks for the future server bring-up path:
+Useful checks for the current server bring-up path:
 
 - Map `0x40000000` for `0x1000` bytes and confirm reads do not bus-fault on a correctly loaded design.
 - Read `CTRL`, `EXTCLK_DIV`, and `STATUS` before enabling acquisition to confirm reset-state expectations.

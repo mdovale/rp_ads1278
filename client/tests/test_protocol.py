@@ -7,6 +7,7 @@ from ads1278_client.protocol import (
     CAPABILITY_LINE,
     CapabilityLineBuffer,
     MessageStreamBuffer,
+    MIN_EXTCLK_DIV,
     build_message,
     pack_set_enable,
     pack_set_extclk_div,
@@ -112,3 +113,8 @@ def test_command_packers_match_server_layout() -> None:
     div_opcode, div_value = struct.unpack("<II", pack_set_extclk_div(625))
     assert div_opcode == CommandOpcode.SET_EXTCLK_DIV
     assert div_value == 625
+
+
+def test_extclk_divider_below_server_minimum_rejected() -> None:
+    with pytest.raises(ValueError, match=f">= {MIN_EXTCLK_DIV}"):
+        pack_set_extclk_div(MIN_EXTCLK_DIV - 1)

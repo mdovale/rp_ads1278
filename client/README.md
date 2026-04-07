@@ -38,6 +38,9 @@ The GUI defaults to `127.0.0.1:5000`. Enter the Red Pitaya host, connect, and
 use the command bar to enable streaming, trigger `SYNC`, change `EXTCLK_DIV`,
 and start or stop CSV logging.
 
+The current server requires `EXTCLK_DIV >= 3`. The GUI enforces that minimum and
+rejects smaller values before sending them.
+
 ## Fake server
 
 For host-side bring-up without hardware:

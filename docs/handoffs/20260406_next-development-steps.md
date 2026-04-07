@@ -2,6 +2,8 @@
 
 This handoff is for the next implementation session. It captures the current repository state and the most valuable order of work.
 
+> Historical note: this handoff predates the in-tree `server/` and `client/` implementations. For the current repo state, start with `README.md`, `docs/feats/server.md`, `docs/feats/client.md`, and `docs/feats/fpga-build-and-deploy.md`.
+
 ## Summary
 
 - The FPGA layer is implemented substantially enough to define the hardware/software contract.

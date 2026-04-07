@@ -4,7 +4,7 @@ This doc describes how the current FPGA acquisition path turns ADS1278 TDM data 
 
 ## Goal
 
-Describe the current acquisition lifecycle from `DRDY` detection through SPI shifting, channel latching, and status reporting so future server and bring-up work can rely on the actual RTL behavior.
+Describe the current acquisition lifecycle from `DRDY` detection through SPI shifting, channel latching, and status reporting so the implemented server and the remaining bring-up work can rely on the actual RTL behavior.
 
 ## Scope
 

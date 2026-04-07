@@ -8,7 +8,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .controller import ClientController
-from .protocol import SERVER_PORT
+from .protocol import MIN_EXTCLK_DIV, SERVER_PORT
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -110,7 +110,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addSpacing(16)
         layout.addWidget(QtWidgets.QLabel("EXTCLK divider"))
         self.divider_input = QtWidgets.QSpinBox()
-        self.divider_input.setRange(0, 1_000_000)
+        self.divider_input.setRange(MIN_EXTCLK_DIV, 1_000_000)
         self.divider_input.setValue(625)
         layout.addWidget(self.divider_input)
 

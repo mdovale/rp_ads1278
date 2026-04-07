@@ -9,6 +9,7 @@ SERVER_PORT = 5000
 CAPABILITY_LINE = "RP_CAP:ads1278_v1"
 CAPABILITY_LINE_MAX = len(CAPABILITY_LINE) + 1
 CHANNEL_COUNT = 8
+MIN_EXTCLK_DIV = 3
 COMMAND_SIZE = 8
 MESSAGE_SIZE = 60
 
@@ -81,6 +82,8 @@ def pack_trigger_sync() -> bytes:
 
 
 def pack_set_extclk_div(divider: int) -> bytes:
+    if divider < MIN_EXTCLK_DIV:
+        raise ValueError(f"EXTCLK divider must be >= {MIN_EXTCLK_DIV}")
     return pack_command(CommandOpcode.SET_EXTCLK_DIV, divider)
 
 

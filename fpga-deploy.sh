@@ -238,7 +238,7 @@ verify_fpga_state() {
   if [[ -n "$fw_loaded" ]]; then
     echo -e "${BLUE}Loaded firmware: ${NC}$fw_loaded"
   fi
-  addr="0x42000000"
+  addr="0x40000000"
   if ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "command -v devmem >/dev/null 2>&1"; then
     if ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "devmem $addr 32 2>/dev/null" >/dev/null 2>&1; then
       echo -e "${GREEN}Verified: FPGA responds at design address $addr (functional read OK).${NC}"

@@ -14,7 +14,7 @@ LIB_DIR="$FPGA_DIR/library/lib_src"
 
 TARGET=""
 VIVADO_BIN="${VIVADO_BIN:-}"
-MAKE_CORES=1
+MAKE_CORES=0
 JOBS=""
 ACTION="build"
 USE_DOCKER=0
@@ -74,6 +74,19 @@ ensure_ads1278_bitstream_names() {
   fi
 }
 
+require_expected_bitstream_artifacts() {
+  local impl_dir="$1"
+  local missing=()
+  [[ -f "$impl_dir/ads1278.bit" ]] || missing+=("$impl_dir/ads1278.bit")
+  [[ -f "$impl_dir/ads1278.bit.bin" ]] || missing+=("$impl_dir/ads1278.bit.bin")
+
+  if (( ${#missing[@]} > 0 )); then
+    echo -e "${RED}Error: expected build artifact(s) not found:${NC}" >&2
+    printf '  %s\n' "${missing[@]}" >&2
+    return 1
+  fi
+}
+
 # Preflight: check required paths exist before running Vivado
 preflight_check() {
   local target="$1" missing=""
@@ -106,8 +119,8 @@ Usage: $(basename "$0") --target rp125_14 [OPTIONS]
 Options:
   --target BOARD        Target board: rp125_14 (required)
   --vivado CMD_OR_PATH  Vivado command (in PATH) or full path (optional)
-  --make-cores          Build custom IP cores (default)
-  --skip-cores          Skip custom IP core generation
+  --make-cores          Build custom IP cores (opt-in)
+  --skip-cores          Skip custom IP core generation (default)
   --jobs N              Parallel jobs for implementation [default: auto]
   --clean               Remove Vivado work directories for the target
   --docker              Run Vivado inside a Docker container
@@ -133,6 +146,7 @@ Environment:
 Examples:
   ./fpga-build.sh --target rp125_14
   ./fpga-build.sh --target rp125_14 --vivado vivado2017
+  ./fpga-build.sh --target rp125_14 --make-cores
   ./fpga-build.sh --target rp125_14 --docker --docker-image my-vivado:2017.2
   ./fpga-build.sh --target rp125_14 --remote 192.168.1.20 --remote-user vivado
 EOF
@@ -561,5 +575,7 @@ else
   fi
   ensure_ads1278_bitstream_names "$impl_dir" "$bit_path"
 fi
+
+require_expected_bitstream_artifacts "$impl_dir"
 
 echo -e "${GREEN}FPGA build completed successfully.${NC}"

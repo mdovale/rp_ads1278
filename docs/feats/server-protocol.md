@@ -4,7 +4,7 @@ This doc describes the current TCP protocol implemented by `server/` in `rp_ads1
 
 ## Goal
 
-Define the current network contract clearly enough that the future client can connect, send control commands, and decode streamed ADS1278 snapshots without inferring layout details from the C source.
+Define the current network contract clearly enough that the implemented Python client can connect, send control commands, and decode streamed ADS1278 snapshots without inferring layout details from the C source.
 
 ## Scope
 
