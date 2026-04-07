@@ -1,10 +1,10 @@
 # Server MMIO Contract
 
-This doc describes the current memory-mapped interface a future `server/` process is expected to use when talking to the FPGA acquisition block on the Red Pitaya PS. It is a software-facing contract derived from the current FPGA implementation, even though no `server/` tree exists in the repo yet.
+This doc describes the current memory-mapped interface the `server/` process uses when talking to the FPGA acquisition block on the Red Pitaya PS. It is the software-facing contract between the implemented C server and the current FPGA register block.
 
 ## Goal
 
-Define the current PS-to-FPGA MMIO interface clearly enough that a future `server/` implementation can map the register block, control acquisition, and read sample data without rediscovering RTL details from scratch.
+Define the current PS-to-FPGA MMIO interface clearly enough that the existing `server/` implementation, bring-up tools, and future client work can rely on the same register-level behavior without rediscovering RTL details from scratch.
 
 ## Scope
 
@@ -13,7 +13,7 @@ Define the current PS-to-FPGA MMIO interface clearly enough that a future `serve
 
 ## User-facing behavior
 
-The current FPGA design exposes one AXI4-Lite register block to the PS at physical base address `0x40000000` with a `0x1000` byte aperture. A future server is expected to access this block through uncached MMIO, for example via `/dev/mem` or a later UIO/platform-driver path.
+The current FPGA design exposes one AXI4-Lite register block to the PS at physical base address `0x40000000` with a `0x1000` byte aperture. The current `server/` implementation accesses this block through uncached MMIO via `/dev/mem`.
 
 Current server-visible register map:
 
@@ -93,8 +93,7 @@ That means the server contract is intentionally simple today:
 - The current MMIO contract does not include an acknowledgement mechanism for consumed samples.
 - The current hardware contract does not expose a missed-frame counter, only a sticky overlap flag.
 - Any future remap of the AXI base address in the block design must be reflected in server code and docs together.
-- The deploy script currently probes `0x42000000`, which does not match the documented MMIO base for this design.
-- Because `server/` does not yet exist, protocol and scaling choices above this MMIO layer are still open.
+- The current server is intentionally a latest-sample MMIO polling server, so protocol and scaling choices above this layer may still evolve in later revisions.
 
 ## Manual QA
 
@@ -116,12 +115,15 @@ Useful checks for the future server bring-up path:
 | AXI GP0 bring-up reference | `docs/notes/AXI_GP0_REGISTER_MAP_HOWTO.md` |
 | Hardware register doc | `docs/feats/fpga-register-map.md` |
 | Acquisition behavior doc | `docs/feats/ads1278-acquisition-pipeline.md` |
+| Current MMIO consumer | `server/memory_map.c` |
 | End-state architecture | `README.md` |
 
 ## Related docs
 
 - [FPGA Register Map](fpga-register-map.md)
 - [ADS1278 Acquisition Pipeline](ads1278-acquisition-pipeline.md)
+- [Server](server.md)
+- [Server Protocol](server-protocol.md)
 - [Board IO Wiring](board-io-wiring.md)
 - [FPGA Build And Deploy](fpga-build-and-deploy.md)
 - [FPGA status and remaining bring-up work](../handoffs/20260304_fpga-work.md)
