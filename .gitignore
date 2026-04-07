@@ -18,7 +18,7 @@ server/test_cmd_parse
 server/test_protocol_layout
 
 # Client build and cache artifacts
-client/.venv/
+.venv/
 client/venv/
 client/build/
 client/dist/
