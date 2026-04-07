@@ -27,6 +27,37 @@ if { [string first $scripts_vivado_version $current_vivado_version] == -1 } {
    puts "WARNING: This script was generated using Vivado <$scripts_vivado_version> and is being run in <$current_vivado_version>. Proceeding anyway."
 }
 
+# Vivado 2017.x does not provide common::send_gid_msg, but newer generated
+# block-design Tcl scripts call it for logging. Provide a minimal fallback so
+# the same checked-in BD script can still run on the supported Red Pitaya flow.
+if { [llength [info commands common::send_gid_msg]] == 0 } {
+   namespace eval common {
+      proc send_gid_msg {args} {
+         set severity "INFO"
+         set message ""
+         set arg_count [llength $args]
+         set idx 0
+
+         while { $idx < $arg_count } {
+            set arg [lindex $args $idx]
+            if { $arg eq "-severity" && ($idx + 1) < $arg_count } {
+               set severity [lindex $args [expr {$idx + 1}]]
+               incr idx 2
+               continue
+            }
+            incr idx
+         }
+
+         if { $arg_count > 0 } {
+            set message [lindex $args end]
+         }
+
+         puts "$severity: $message"
+         return 0
+      }
+   }
+}
+
 ################################################################
 # START
 ################################################################

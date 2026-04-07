@@ -40,7 +40,61 @@ get_board_work_dir() {
 find_bitstream_path() {
   local impl_dir="$1"
   local candidate
-  for candidate in "$impl_dir/ads1278.bit.bin" "$impl_dir/ads1278.bit" "$impl_dir/system_wrapper.bit" "$impl_dir/system_wrapper.bit.bin"; do
+  for candidate in \
+    "$impl_dir/ads1278.bit" \
+    "$impl_dir/ads1278.bit.bin" \
+    "$impl_dir/red_pitaya_top.bit" \
+    "$impl_dir/red_pitaya_top.bit.bin" \
+    "$impl_dir/system_wrapper.bit" \
+    "$impl_dir/system_wrapper.bit.bin"; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  for candidate in "$impl_dir"/*.bit "$impl_dir"/*.bit.bin; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_bit_file_path() {
+  local impl_dir="$1"
+  local candidate
+  for candidate in \
+    "$impl_dir/ads1278.bit" \
+    "$impl_dir/red_pitaya_top.bit" \
+    "$impl_dir/system_wrapper.bit"; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  for candidate in "$impl_dir"/*.bit; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_bit_bin_file_path() {
+  local impl_dir="$1"
+  local candidate
+  for candidate in \
+    "$impl_dir/ads1278.bit.bin" \
+    "$impl_dir/red_pitaya_top.bit.bin" \
+    "$impl_dir/system_wrapper.bit.bin"; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  for candidate in "$impl_dir"/*.bit.bin; do
     if [[ -f "$candidate" ]]; then
       echo "$candidate"
       return 0
@@ -52,25 +106,44 @@ find_bitstream_path() {
 ensure_ads1278_bitstream_names() {
   local impl_dir="$1"
   local bit_path="$2"
+  local bit_src=""
+  local bit_bin_src=""
+
   if [[ -z "$bit_path" ]]; then
     bit_path="$(find_bitstream_path "$impl_dir" || true)"
   fi
-  [[ -n "$bit_path" ]] || return 0
-  if [[ "$(basename "$bit_path")" != "ads1278.bit" ]]; then
-    cp -f "$bit_path" "$impl_dir/ads1278.bit"
+
+  if [[ -n "$bit_path" ]]; then
+    case "$(basename "$bit_path")" in
+      *.bit.bin)
+        bit_bin_src="$bit_path"
+        if [[ -f "${bit_path%.bin}" ]]; then
+          bit_src="${bit_path%.bin}"
+        fi
+        ;;
+      *.bit)
+        bit_src="$bit_path"
+        if [[ -f "${bit_path}.bin" ]]; then
+          bit_bin_src="${bit_path}.bin"
+        fi
+        ;;
+    esac
   fi
-  base_bin="${bit_path%.bit}.bit.bin"
-  if [[ -f "$base_bin" ]]; then
-    if [[ "$(basename "$base_bin")" != "ads1278.bit.bin" ]]; then
-      cp -f "$base_bin" "$impl_dir/ads1278.bit.bin"
-    fi
-  elif [[ -f "$impl_dir/ads1278.bit" ]]; then
-    # bootgen may have created .bit.bin with different base name
-    for b in "$impl_dir"/*.bit.bin; do
-      [[ -f "$b" ]] || continue
-      cp -f "$b" "$impl_dir/ads1278.bit.bin"
-      break
-    done
+
+  if [[ -z "$bit_src" ]]; then
+    bit_src="$(find_bit_file_path "$impl_dir" || true)"
+  fi
+
+  if [[ -z "$bit_bin_src" ]]; then
+    bit_bin_src="$(find_bit_bin_file_path "$impl_dir" || true)"
+  fi
+
+  if [[ -n "$bit_src" && "$(basename "$bit_src")" != "ads1278.bit" ]]; then
+    cp -f "$bit_src" "$impl_dir/ads1278.bit"
+  fi
+
+  if [[ -n "$bit_bin_src" && "$(basename "$bit_bin_src")" != "ads1278.bit.bin" ]]; then
+    cp -f "$bit_bin_src" "$impl_dir/ads1278.bit.bin"
   fi
 }
 

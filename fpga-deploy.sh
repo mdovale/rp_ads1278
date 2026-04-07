@@ -21,6 +21,8 @@ PROGRAM_FPGA=1
 ASSUME_YES=0
 FPGAUTIL_PATH="/opt/redpitaya/bin/fpgautil"
 REMOTE_DIR="/root"
+VERIFY_TIMEOUT_S="${VERIFY_TIMEOUT_S:-3}"
+REMOTE_HAS_TIMEOUT=""
 
 usage() {
   cat <<EOF
@@ -38,6 +40,7 @@ Options:
   --port PORT           SSH port [default: 22]
   --fpgautil PATH       fpgautil path on RedPitaya [default: /opt/redpitaya/bin/fpgautil]
   --remote-dir DIR      Target directory on RedPitaya [default: /root]
+  --verify-timeout SEC  Timeout for optional post-load probes [default: 3]
   --no-program          Only copy bitstream, do not load FPGA
   --yes                 Skip confirmation prompts
   --help                Show this help
@@ -118,6 +121,11 @@ while [[ $# -gt 0 ]]; do
     --remote-dir)
       if [[ $# -lt 2 ]]; then echo -e "${RED}Error: --remote-dir requires an argument.${NC}" >&2; usage >&2; exit 1; fi
       REMOTE_DIR="$2"
+      shift 2
+      ;;
+    --verify-timeout)
+      if [[ $# -lt 2 ]]; then echo -e "${RED}Error: --verify-timeout requires an argument.${NC}" >&2; usage >&2; exit 1; fi
+      VERIFY_TIMEOUT_S="$2"
       shift 2
       ;;
     --no-program)
@@ -219,8 +227,28 @@ cleanup_ssh() {
 }
 trap cleanup_ssh EXIT INT TERM
 
+detect_remote_timeout() {
+  if [[ -n "$REMOTE_HAS_TIMEOUT" ]]; then
+    return 0
+  fi
+  if ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "command -v timeout >/dev/null 2>&1"; then
+    REMOTE_HAS_TIMEOUT=1
+  else
+    REMOTE_HAS_TIMEOUT=0
+  fi
+}
+
+run_remote_timed() {
+  local remote_cmd="$1"
+  detect_remote_timeout
+  if [[ "$REMOTE_HAS_TIMEOUT" != "1" ]]; then
+    return 125
+  fi
+  ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "if command -v bash >/dev/null 2>&1; then timeout ${VERIFY_TIMEOUT_S}s bash -c '$remote_cmd'; else timeout ${VERIFY_TIMEOUT_S}s sh -c '$remote_cmd'; fi"
+}
+
 verify_fpga_state() {
-  local state fw_loaded addr
+  local state fw_loaded addr probe_status
   if ! ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "[ -r /sys/class/fpga_manager/fpga0/state ]" 2>/dev/null; then
     return
   fi
@@ -234,16 +262,31 @@ verify_fpga_state() {
     return
   fi
   echo -e "${GREEN}Verified: write succeeded (kernel + FPGA DONE confirmed).${NC}"
-  fw_loaded="$(ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "cat /sys/class/fpga_manager/fpga0/firmware 2>/dev/null" || true)"
-  if [[ -n "$fw_loaded" ]]; then
-    echo -e "${BLUE}Loaded firmware: ${NC}$fw_loaded"
+  if fw_loaded="$(run_remote_timed "cat /sys/class/fpga_manager/fpga0/firmware 2>/dev/null")"; then
+    if [[ -n "$fw_loaded" ]]; then
+      echo -e "${BLUE}Loaded firmware: ${NC}$fw_loaded"
+    fi
+  else
+    probe_status=$?
+    if [[ "$probe_status" == "124" ]]; then
+      echo -e "${YELLOW}Warning: reading FPGA firmware name timed out after ${VERIFY_TIMEOUT_S}s.${NC}" >&2
+    elif [[ "$probe_status" == "125" ]]; then
+      echo -e "${YELLOW}Note: remote 'timeout' command not available; skipping optional firmware-name probe to avoid hangs.${NC}" >&2
+    fi
   fi
   addr="0x40000000"
   if ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "command -v devmem >/dev/null 2>&1"; then
-    if ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "devmem $addr 32 2>/dev/null" >/dev/null 2>&1; then
+    if run_remote_timed "devmem $addr 32 2>/dev/null" >/dev/null 2>&1; then
       echo -e "${GREEN}Verified: FPGA responds at design address $addr (functional read OK).${NC}"
     else
-      echo -e "${YELLOW}Warning: devmem read of $addr failed (bus error or wrong design).${NC}" >&2
+      probe_status=$?
+      if [[ "$probe_status" == "124" ]]; then
+        echo -e "${YELLOW}Warning: devmem read of $addr timed out after ${VERIFY_TIMEOUT_S}s; skipping MMIO verification.${NC}" >&2
+      elif [[ "$probe_status" == "125" ]]; then
+        echo -e "${YELLOW}Note: remote 'timeout' command not available; skipping optional devmem probe to avoid hangs.${NC}" >&2
+      else
+        echo -e "${YELLOW}Warning: devmem read of $addr failed (bus error or wrong design).${NC}" >&2
+      fi
     fi
   fi
 }
