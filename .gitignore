@@ -10,3 +10,22 @@ fpga/work/
 fpga/work125_14/
 fpga/.Xil/
 fpga/.build_*
+
+# Server build artifacts
+server/server
+server/rpdevmem
+server/test_cmd_parse
+server/test_protocol_layout
+
+# Client build and cache artifacts
+client/.venv/
+client/venv/
+client/build/
+client/dist/
+client/.pytest_cache/
+client/.mypy_cache/
+client/.ruff_cache/
+client/.coverage
+client/*.egg-info/
+client/**/__pycache__/
+client/**/*.py[cod]
