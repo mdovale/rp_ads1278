@@ -11,11 +11,14 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 BINARY_NAME="server"
+RPDEVMEM_NAME="rpdevmem"
 BUILD_DIR=""
 BINARY_PATH=""
+RPDEVMEM_PATH=""
 TARGET_USER="root"
 TARGET_DIR="/usr/local/bin"
 TARGET_BINARY_NAME="ads1278-server"
+TARGET_RPDEVMEM_NAME="ads1278-rpdevmem"
 REDPITAYA_IP="${REDPITAYA_IP:-}"
 SSH_PORT="22"
 FORCE=0
@@ -28,9 +31,11 @@ Options:
   --ip IP            RedPitaya IP or hostname (or use RP_IP/REDPITAYA_IP env)
   --build-dir DIR    Build directory [default: auto-detect]
   --binary PATH      Explicit path to server binary
+  --rpdevmem PATH    Explicit path to rpdevmem (default: DIR/rpdevmem next to server)
   --user USER        SSH user [default: root]
   --target-dir DIR   Target directory on RedPitaya [default: /usr/local/bin]
-  --target-name NAME Deployed binary name [default: ads1278-server]
+  --target-name NAME Deployed server name [default: ads1278-server]
+  --target-rpdevmem-name NAME  Deployed rpdevmem name [default: ads1278-rpdevmem]
   --port PORT        SSH port [default: 22]
   --force            Deploy even if binary format looks wrong
   --help             Show this help
@@ -77,6 +82,11 @@ auto_detect_binary() {
   done
 }
 
+default_rpdevmem_path() {
+  local server_path="$1"
+  echo "$(cd "$(dirname "$server_path")" && pwd)/$RPDEVMEM_NAME"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ip)
@@ -91,6 +101,10 @@ while [[ $# -gt 0 ]]; do
       BINARY_PATH="$2"
       shift 2
       ;;
+    --rpdevmem)
+      RPDEVMEM_PATH="$2"
+      shift 2
+      ;;
     --user)
       TARGET_USER="$2"
       shift 2
@@ -101,6 +115,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --target-name)
       TARGET_BINARY_NAME="$2"
+      shift 2
+      ;;
+    --target-rpdevmem-name)
+      TARGET_RPDEVMEM_NAME="$2"
       shift 2
       ;;
     --port)
@@ -144,6 +162,18 @@ if [[ -z "$BINARY_PATH" || ! -f "$BINARY_PATH" ]]; then
   exit 1
 fi
 
+if [[ -z "$RPDEVMEM_PATH" ]]; then
+  RPDEVMEM_PATH="$(default_rpdevmem_path "$BINARY_PATH")"
+else
+  RPDEVMEM_PATH="$(resolve_path "$RPDEVMEM_PATH")"
+fi
+
+if [[ ! -f "$RPDEVMEM_PATH" ]]; then
+  echo -e "${RED}Error: rpdevmem binary not found at $RPDEVMEM_PATH${NC}" >&2
+  echo "Rebuild so both server and rpdevmem are produced, or pass --rpdevmem PATH." >&2
+  exit 1
+fi
+
 if [[ -z "$REDPITAYA_IP" ]]; then
   echo -e "${RED}Error: --ip is required (or set RP_IP/REDPITAYA_IP).${NC}" >&2
   exit 1
@@ -154,35 +184,53 @@ if ! command -v ssh &>/dev/null || ! command -v scp &>/dev/null; then
   exit 1
 fi
 
-if command -v file &>/dev/null; then
-  binary_type="$(file "$BINARY_PATH" 2>/dev/null || true)"
-  if ! echo "$binary_type" | grep -Eqi 'ELF.*(ARM|aarch64)'; then
-    if [[ "$FORCE" == "1" ]]; then
-      echo -e "${YELLOW}Warning: binary does not appear to be an ELF ARM executable; deploying anyway (--force).${NC}" >&2
-      echo -e "${YELLOW}Type: $binary_type${NC}" >&2
-    else
-      echo -e "${RED}Error: binary does not appear to be an ELF ARM executable.${NC}" >&2
-      echo -e "${RED}Type: $binary_type${NC}" >&2
-      echo -e "${YELLOW}Rebuild with: ./server-build-cross.sh --rebuild${NC}" >&2
-      echo -e "${YELLOW}Or override with: ./server-deploy.sh ... --force${NC}" >&2
-      exit 1
-    fi
+check_arm_elf() {
+  local path="$1"
+  local label="$2"
+  if ! command -v file &>/dev/null; then
+    return 0
   fi
+  local binary_type
+  binary_type="$(file "$path" 2>/dev/null || true)"
+  if echo "$binary_type" | grep -Eqi 'ELF.*(ARM|aarch64)'; then
+    return 0
+  fi
+  if [[ "$FORCE" == "1" ]]; then
+    echo -e "${YELLOW}Warning: $label does not appear to be an ELF ARM executable; deploying anyway (--force).${NC}" >&2
+    echo -e "${YELLOW}Type: $binary_type${NC}" >&2
+    return 0
+  fi
+  echo -e "${RED}Error: $label does not appear to be an ELF ARM executable.${NC}" >&2
+  echo -e "${RED}Type: $binary_type${NC}" >&2
+  echo -e "${YELLOW}Rebuild with: ./server-build-cross.sh --rebuild${NC}" >&2
+  echo -e "${YELLOW}Or override with: ./server-deploy.sh ... --force${NC}" >&2
+  return 1
+}
+
+if ! check_arm_elf "$BINARY_PATH" "server binary"; then
+  exit 1
+fi
+if ! check_arm_elf "$RPDEVMEM_PATH" "rpdevmem binary"; then
+  exit 1
 fi
 
-echo -e "${GREEN}Deploying server to RedPitaya...${NC}"
-echo "Source: $BINARY_PATH"
-echo "Target: $TARGET_USER@$REDPITAYA_IP:$TARGET_DIR/$TARGET_BINARY_NAME"
+echo -e "${GREEN}Deploying server and rpdevmem to RedPitaya...${NC}"
+echo "Server source: $BINARY_PATH"
+echo "Server target: $TARGET_USER@$REDPITAYA_IP:$TARGET_DIR/$TARGET_BINARY_NAME"
+echo "rpdevmem source: $RPDEVMEM_PATH"
+echo "rpdevmem target: $TARGET_USER@$REDPITAYA_IP:$TARGET_DIR/$TARGET_RPDEVMEM_NAME"
 
 echo -e "${BLUE}Creating target directory...${NC}"
 ssh -p "$SSH_PORT" "$TARGET_USER@$REDPITAYA_IP" "mkdir -p '$TARGET_DIR'"
 
-echo -e "${BLUE}Copying binary...${NC}"
+echo -e "${BLUE}Copying binaries...${NC}"
 scp -P "$SSH_PORT" "$BINARY_PATH" "$TARGET_USER@$REDPITAYA_IP:$TARGET_DIR/$TARGET_BINARY_NAME"
+scp -P "$SSH_PORT" "$RPDEVMEM_PATH" "$TARGET_USER@$REDPITAYA_IP:$TARGET_DIR/$TARGET_RPDEVMEM_NAME"
 
 echo -e "${BLUE}Setting permissions...${NC}"
-ssh -p "$SSH_PORT" "$TARGET_USER@$REDPITAYA_IP" "chmod +x '$TARGET_DIR/$TARGET_BINARY_NAME'"
+ssh -p "$SSH_PORT" "$TARGET_USER@$REDPITAYA_IP" "chmod +x '$TARGET_DIR/$TARGET_BINARY_NAME' '$TARGET_DIR/$TARGET_RPDEVMEM_NAME'"
 
 echo -e "${GREEN}Deployment completed successfully.${NC}"
 echo "Run on device:"
 echo "  ssh -p $SSH_PORT $TARGET_USER@$REDPITAYA_IP '$TARGET_DIR/$TARGET_BINARY_NAME'"
+echo "  ssh -p $SSH_PORT $TARGET_USER@$REDPITAYA_IP '$TARGET_DIR/$TARGET_RPDEVMEM_NAME snapshot'"

@@ -63,47 +63,71 @@ Important drift note:
 
 ## How To Use `devmem`
 
-This checklist uses `devmem` a lot. Here is the simple mental model:
+Stock Red Pitaya images often omit BusyBox `devmem`. This checklist uses the name **`devmem`** for the **`ads1278-rpdevmem`** helper (same binary as deployed by `server-deploy.sh`). Install once on the board:
 
-- `devmem` reads or writes one memory-mapped register directly from Linux
-- it talks to the live FPGA register block
+```bash
+ln -sf /usr/local/bin/ads1278-rpdevmem /usr/local/bin/devmem
+```
+
+Or run **`/usr/local/bin/ads1278-rpdevmem`** everywhere this doc says **`devmem`**.
+
+Mental model:
+
+- all access is **32-bit** MMIO into the live FPGA register block (base `0x42000000`, aperture `0x1000`)
+- commands use **register offsets** from that base, **not** full physical addresses (using `0x42000028` as an offset will fault)
 - reads are safe for this checklist
 - writes take effect immediately
 
 Basic forms:
 
 ```bash
-devmem <address> 32
-devmem <address> 32 <value>
+devmem read <offset>
+devmem write <offset> <value>
+devmem snapshot
 ```
 
-Examples:
+Examples (offsets match `server/memory_map.h`):
 
 ```bash
-devmem 0x42000028 32
-devmem 0x42000028 32 625
-devmem 0x42000028 32 0x271
-devmem 0x42000024 32 0x00000002
+devmem read 0x28
+devmem write 0x28 625
+devmem write 0x28 0x271
+devmem write 0x24 0x00000002
 ```
 
 What those mean:
 
-- `devmem 0x42000028 32`
-  - read the 32-bit `EXTCLK_DIV` register
-- `devmem 0x42000028 32 625`
+- `devmem read 0x28`
+  - read the 32-bit `EXTCLK_DIV` register (physical `0x42000028`)
+- `devmem write 0x28 625`
   - write decimal `625`
-- `devmem 0x42000028 32 0x271`
+- `devmem write 0x28 0x271`
   - write the same value in hex
-- `devmem 0x42000024 32 0x00000002`
+- `devmem write 0x24 0x00000002`
   - set `CTRL[1] = 1`, which enables acquisition and `EXTCLK`
 
-Typical output format:
+Typical **read** output:
 
 ```text
 0x00000271
 ```
 
 That means the 32-bit register currently contains hex `0x271`, which is decimal `625`.
+
+Typical **write** output:
+
+```text
+wrote 0x000003e8 to 0x00000028
+```
+
+Offset cheat sheet (physical = `0x42000000` + offset):
+
+| Register | Offset |
+|----------|--------|
+| `CH1`..`CH8` | `0x00`..`0x1c` (step `0x04`) |
+| `STATUS` | `0x20` |
+| `CTRL` | `0x24` |
+| `EXTCLK_DIV` | `0x28` |
 
 ### Quick decoding guide
 
@@ -158,7 +182,7 @@ If you write a register and then immediately read it back:
 
 - if the value matches, the MMIO path is probably working
 - if it snaps back to the old value, the write did not stick or you are not talking to the expected register block
-- if `devmem` faults or hangs, stop and fix MMIO first
+- if `devmem` faults, segfaults, or hangs, stop and fix MMIO first (a segfault often means a bad offset, not a missing FPGA)
 
 ---
 
@@ -166,6 +190,7 @@ If you write a register and then immediately read it back:
 
 - Keep the ADS1278EVM disconnected for the first half of this checklist.
 - Have SSH access to the Red Pitaya as `root`.
+- After deploying the server artifacts, install the MMIO helper symlink once (see [How To Use `devmem`](#how-to-use-devmem)) so commands in this doc paste as-is.
 - Have a scope probe ground clip and at least one probe channel ready.
 - Use Red Pitaya `GND` as the scope reference.
 
@@ -195,7 +220,7 @@ Do not wire the ADS1278EVM yet unless all of these are true:
 
 - FPGA bitstream loads and the board stays reachable
 - FPGA manager reports `operating`
-- `devmem` reads at `0x42000000` do not bus-fault
+- `devmem read 0x20` (or `devmem snapshot`) does not bus-fault or segfault
 - `EXTCLK_DIV` can be written and read back
 - `CTRL` enable can be written and read back
 - `EXTCLK` appears on the scope after enable
@@ -213,19 +238,19 @@ From the repo root:
 
 ```bash
 ls -l fpga/work125_14/rp_ads1278.runs/impl_1/ads1278.bit.bin
-ls -l build-cross/server
+ls -l build-cross/server build-cross/rpdevmem
 ```
 
 If you used the Docker build:
 
 ```bash
-ls -l build-docker/server
+ls -l build-docker/server build-docker/rpdevmem
 ```
 
 Expected:
 
 - `ads1278.bit.bin` exists
-- an ARM server binary exists under `build-cross/server` or `build-docker/server`
+- ARM `server` and `rpdevmem` binaries exist under `build-cross/` or `build-docker/`
 
 ---
 
@@ -275,9 +300,9 @@ ssh root@<RP_IP>
 Read the key registers:
 
 ```bash
-devmem 0x42000020 32
-devmem 0x42000024 32
-devmem 0x42000028 32
+devmem read 0x20
+devmem read 0x24
+devmem read 0x28
 ```
 
 Expected reset-state values:
@@ -312,14 +337,14 @@ This is the most important early software-side check.
 Read current divider:
 
 ```bash
-devmem 0x42000028 32
+devmem read 0x28
 ```
 
 Write `1000` and read it back:
 
 ```bash
-devmem 0x42000028 32 1000
-devmem 0x42000028 32
+devmem write 0x28 1000
+devmem read 0x28
 ```
 
 Expected:
@@ -329,8 +354,8 @@ Expected:
 Restore default:
 
 ```bash
-devmem 0x42000028 32 625
-devmem 0x42000028 32
+devmem write 0x28 625
+devmem read 0x28
 ```
 
 Expected:
@@ -342,8 +367,8 @@ Expected:
 Enable:
 
 ```bash
-devmem 0x42000024 32 0x00000002
-devmem 0x42000024 32
+devmem write 0x24 0x00000002
+devmem read 0x24
 ```
 
 Expected:
@@ -353,9 +378,9 @@ Expected:
 Disable again:
 
 ```bash
-devmem 0x42000024 32 0x00000000
-devmem 0x42000024 32
-devmem 0x42000020 32
+devmem write 0x24 0x00000000
+devmem read 0x24
+devmem read 0x20
 ```
 
 Expected:
@@ -395,7 +420,7 @@ Keep `docs/feats/board-io-wiring.md` open while probing.
 On the Red Pitaya:
 
 ```bash
-devmem 0x42000024 32 0x00000000
+devmem write 0x24 0x00000000
 ```
 
 Expected on the scope:
@@ -411,8 +436,8 @@ Expected on the scope:
 On the Red Pitaya:
 
 ```bash
-devmem 0x42000028 32 625
-devmem 0x42000024 32 0x00000002
+devmem write 0x28 625
+devmem write 0x24 0x00000002
 ```
 
 Expected on the scope:
@@ -430,9 +455,9 @@ Optional divider experiments:
 Commands:
 
 ```bash
-devmem 0x42000028 32 1000
-devmem 0x42000028 32 63
-devmem 0x42000028 32 625
+devmem write 0x28 1000
+devmem write 0x28 63
+devmem write 0x28 625
 ```
 
 Expected:
@@ -446,7 +471,7 @@ Expected:
 First, test while disabled:
 
 ```bash
-devmem 0x42000024 32 0x00000001
+devmem write 0x24 0x00000001
 ```
 
 Expected on the scope:
@@ -458,8 +483,8 @@ Expected on the scope:
 Then test while enabled:
 
 ```bash
-devmem 0x42000024 32 0x00000002
-devmem 0x42000024 32 0x00000003
+devmem write 0x24 0x00000002
+devmem write 0x24 0x00000003
 ```
 
 Expected:
@@ -712,7 +737,7 @@ Use this as a quick diagnosis map.
 - Board resets or SSH dies after `fpgautil`
   - the FPGA integration problem is not fully fixed
 
-- `devmem` at `0x42000000` bus-faults
+- `devmem read 0x20` (or `devmem snapshot`) bus-faults
   - wrong design loaded, wrong address, or broken AXI path
 
 - `EXTCLK_DIV` always reads back `625`
@@ -769,6 +794,7 @@ Use this exact order:
 | FPGA deploy script | `fpga-deploy.sh` |
 | Server deploy script | `server-deploy.sh` |
 | Current MMIO base | `server/memory_map.h` |
+| MMIO peek/poke helper (`ads1278-rpdevmem`) | `server/rpdevmem.c` |
 | FPGA AXI slave reset defaults | `fpga/rtl/ads1278_axi_slave.sv` |
 | EXTCLK generator behavior | `fpga/rtl/ads1278_extclk_gen.v` |
 | SYNC pulse behavior | `fpga/rtl/ads1278_sync_pulse.v` |

@@ -13,6 +13,7 @@ SERVER_DIR="${SERVER_DIR:-$SCRIPT_DIR/server}"
 
 BUILD_DIR="$SCRIPT_DIR/build-cross"
 BINARY_NAME="server"
+RPDEVMEM_NAME="rpdevmem"
 CC_BIN="${CC:-arm-linux-gnueabihf-gcc}"
 CFLAGADD="${CFLAGADD:-}"
 JOBS=""
@@ -123,13 +124,20 @@ make_build() {
   echo -e "${GREEN}Building server (cross-compile)...${NC}"
   echo "Compiler: $CC_BIN"
   echo "Jobs: $JOBS"
-  echo "Output: $BUILD_DIR/$BINARY_NAME"
+  echo "Output: $BUILD_DIR/$BINARY_NAME, $BUILD_DIR/$RPDEVMEM_NAME"
   mkdir -p "$BUILD_DIR"
 
   if [[ -f "$SERVER_DIR/$BINARY_NAME" ]] && command -v file &>/dev/null; then
     existing_type="$(file "$SERVER_DIR/$BINARY_NAME" 2>/dev/null || true)"
     if ! echo "$existing_type" | grep -Eqi 'ELF.*(ARM|aarch64)'; then
       echo -e "${YELLOW}Existing $SERVER_DIR/$BINARY_NAME is not an ELF ARM binary; cleaning to force rebuild.${NC}" >&2
+      make -C "$SERVER_DIR" clean
+    fi
+  fi
+  if [[ -f "$SERVER_DIR/$RPDEVMEM_NAME" ]] && command -v file &>/dev/null; then
+    existing_rpd_type="$(file "$SERVER_DIR/$RPDEVMEM_NAME" 2>/dev/null || true)"
+    if ! echo "$existing_rpd_type" | grep -Eqi 'ELF.*(ARM|aarch64)'; then
+      echo -e "${YELLOW}Existing $SERVER_DIR/$RPDEVMEM_NAME is not an ELF ARM binary; cleaning to force rebuild.${NC}" >&2
       make -C "$SERVER_DIR" clean
     fi
   fi
@@ -143,16 +151,23 @@ make_build() {
     echo -e "${RED}Error: build did not produce $SERVER_DIR/$BINARY_NAME${NC}" >&2
     exit 1
   fi
+  if [[ ! -f "$SERVER_DIR/$RPDEVMEM_NAME" ]]; then
+    echo -e "${RED}Error: build did not produce $SERVER_DIR/$RPDEVMEM_NAME${NC}" >&2
+    exit 1
+  fi
   cp "$SERVER_DIR/$BINARY_NAME" "$BUILD_DIR/$BINARY_NAME"
+  cp "$SERVER_DIR/$RPDEVMEM_NAME" "$BUILD_DIR/$RPDEVMEM_NAME"
   if command -v file &>/dev/null; then
-    built_type="$(file "$BUILD_DIR/$BINARY_NAME" 2>/dev/null || true)"
-    echo "$built_type"
-    if ! echo "$built_type" | grep -Eqi 'ELF.*(ARM|aarch64)'; then
-      echo -e "${RED}Error: built binary is not an ELF ARM executable. Did you rebuild correctly?${NC}" >&2
-      echo -e "${RED}Type: $built_type${NC}" >&2
-      echo -e "${YELLOW}Hint: run ./server-build-cross.sh --rebuild to force a clean build.${NC}" >&2
-      exit 1
-    fi
+    for built in "$BUILD_DIR/$BINARY_NAME" "$BUILD_DIR/$RPDEVMEM_NAME"; do
+      built_type="$(file "$built" 2>/dev/null || true)"
+      echo "$built_type"
+      if ! echo "$built_type" | grep -Eqi 'ELF.*(ARM|aarch64)'; then
+        echo -e "${RED}Error: built binary is not an ELF ARM executable: $built${NC}" >&2
+        echo -e "${RED}Type: $built_type${NC}" >&2
+        echo -e "${YELLOW}Hint: run ./server-build-cross.sh --rebuild to force a clean build.${NC}" >&2
+        exit 1
+      fi
+    done
   fi
   echo -e "${GREEN}Build completed successfully.${NC}"
 }

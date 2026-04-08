@@ -169,7 +169,7 @@ run_shell() {
 }
 
 run_build() {
-  echo -e "${GREEN}Building server in Docker...${NC}"
+  echo -e "${GREEN}Building server and rpdevmem in Docker...${NC}"
   mkdir -p "$BUILD_DIR"
   local container_build_dir="/work/$BUILD_DIR_REL"
   run_cmd=(docker run --rm)
@@ -183,17 +183,19 @@ run_build() {
   else
     build_make_cmd="make -B -j $JOBS CC=arm-linux-gnueabihf-gcc"
   fi
-  run_cmd+=(bash -lc "make clean >/dev/null 2>&1 || true; rm -f server; ${build_make_cmd} && cp server \"${container_build_dir}/server\"")
+  run_cmd+=(bash -lc "make clean >/dev/null 2>&1 || true; rm -f server rpdevmem; ${build_make_cmd} && cp server \"${container_build_dir}/server\" && cp rpdevmem \"${container_build_dir}/rpdevmem\"")
   "${run_cmd[@]}"
   if command -v file &>/dev/null; then
-    built_type="$(file "$BUILD_DIR/server" 2>/dev/null || true)"
-    echo "$built_type"
-    if ! echo "$built_type" | grep -Eqi 'ELF.*(ARM|aarch64)'; then
-      echo -e "${RED}Error: built binary is not an ELF ARM executable.${NC}" >&2
-      echo -e "${RED}Type: $built_type${NC}" >&2
-      echo -e "${YELLOW}Hint: run 'make -C server clean' and then rerun: ./server-build-docker.sh${NC}" >&2
-      exit 1
-    fi
+    for built in "$BUILD_DIR/server" "$BUILD_DIR/rpdevmem"; do
+      built_type="$(file "$built" 2>/dev/null || true)"
+      echo "$built_type"
+      if ! echo "$built_type" | grep -Eqi 'ELF.*(ARM|aarch64)'; then
+        echo -e "${RED}Error: built binary is not an ELF ARM executable: $built${NC}" >&2
+        echo -e "${RED}Type: $built_type${NC}" >&2
+        echo -e "${YELLOW}Hint: run 'make -C server clean' and then rerun: ./server-build-docker.sh${NC}" >&2
+        exit 1
+      fi
+    done
   fi
   echo -e "${GREEN}Build completed successfully.${NC}"
 }
