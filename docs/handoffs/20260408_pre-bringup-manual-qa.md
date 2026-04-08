@@ -1,153 +1,175 @@
 # rp_ads1278 - pre-bring-up manual QA checklist
 
-This handoff captures the current state of the `rp_ads1278` stack just before first physical bring-up of the ADS1278EVM on real hardware. It is intended to be a tight, operator-facing checklist for validating the FPGA, MMIO, server, client, and board-side signals before wiring the ADC board and then for performing a first controlled wired bring-up.
+This is a bench-facing runbook for validating the current `rp_ads1278` FPGA, MMIO path, server, client, and Red Pitaya output pins before first physical bring-up of the ADS1278EVM.
+
+Use it in two stages:
+
+1. First, validate the Red Pitaya with the ADS1278EVM disconnected.
+2. Only then wire the ADC board and repeat the key checks under load.
+
+---
 
 ## Summary
 
-- The major blocker from the previous handoff is cleared: programming the FPGA with `fpgautil -b` no longer crashes or resets the Red Pitaya Linux side.
-- The current no-ADS1278 behavior appears mostly defined by the implementation:
+- The big recovery milestone is complete: loading the FPGA bitstream with `fpgautil -b` no longer crashes or resets Red Pitaya Linux.
+- The current no-ADC behavior is mostly explained by the code:
   - the server prints only its startup line,
   - the client connects and turns green,
   - the capability line is `RP_CAP:ads1278_v1`,
   - one initial `SAMPLE` is sent,
   - `frame_cnt` stays at `0` if no acquisition frames are arriving,
   - plots stay blank or effectively static because no further `SAMPLE` messages are emitted.
-- The current implementation truth is that the FPGA MMIO base is `0x42000000`, not `0x40000000`.
-- The final pre-bring-up gate should be:
-  - FPGA load is stable,
-  - MMIO reads and writes at `0x42000000` work,
-  - `EXTCLK` is visible on a scope after enable,
+- The current implementation truth is that the FPGA MMIO base is `0x42000000`.
+- The key pre-bring-up gate is:
+  - FPGA loads safely,
+  - MMIO reads and writes work,
+  - `EXTCLK` is visible on the scope,
   - `/SYNC` pulses on command,
-  - `SCLK` stays idle low when no `/DRDY` is present,
-  - server/client control round-trips are correct.
-- If all of the above pass, first wired bring-up is reasonable.
+  - `SCLK` stays idle low with no `/DRDY`,
+  - server/client control round-trips work.
 
-## Why this handoff exists
+If those pass, first wired bring-up is reasonable.
 
-The next work step is not more software implementation. It is controlled hardware validation. Before connecting the ADS1278EVM, we want one explicit checklist that:
+---
 
-- confirms the current FPGA image is safe to load,
-- confirms the AXI/MMIO path is alive,
-- confirms the Red Pitaya output signals behave sensibly on the bench with no ADC attached,
-- confirms the current server/client behavior is explained by the code,
-- reduces the chance of wasting time debugging wiring when the actual issue is still board-side MMIO or clock generation.
+## Current Implementation Truth
 
-## Current implementation truth to rely on
+Assume the following unless the repo changes:
 
-These are the current checked-in truths that this checklist assumes:
-
-- FPGA register base: `0x42000000`
-- Register aperture: `0x1000`
-- Register offsets:
+- MMIO base: `0x42000000`
+- MMIO aperture: `0x1000`
+- key register offsets:
   - `STATUS` = `0x20`
   - `CTRL` = `0x24`
   - `EXTCLK_DIV` = `0x28`
-- Reset defaults:
+- reset defaults:
   - `CTRL = 0`
   - `EXTCLK_DIV = 625`
   - `frame_cnt = 0`
   - `overflow = 0`
-- `CTRL[1]` enables acquisition and the current `EXTCLK` generator.
-- `CTRL[0]` triggers a one-shot `/SYNC` pulse and auto-clears in hardware.
-- `EXTCLK` frequency is `125 MHz / (2 * EXTCLK_DIV)`.
-- With `EXTCLK_DIV = 625`, expected `EXTCLK` is `100 kHz`.
-- `SCLK` only toggles after a falling edge on `/DRDY`; with no ADC connected, it should stay idle low.
-- `/SYNC` idles high and pulses low for one `EXTCLK` period when triggered.
+- `CTRL[1]` enables acquisition and `EXTCLK`
+- `CTRL[0]` triggers one `/SYNC` pulse
+- `EXTCLK` frequency is `125 MHz / (2 * EXTCLK_DIV)`
+- `EXTCLK_DIV = 625` should give about `100 kHz`
+- `SCLK` should not toggle until a falling edge on `/DRDY`
+- `/SYNC` idles high and pulses low
 
 Important drift note:
 
-- Some older handoffs and logs still mention `0x40000000`.
-- The current live sources and current feature docs use `0x42000000`:
-  - `fpga/source/system_design_bd_rp125_14/system.tcl`
-  - `server/memory_map.h`
-  - `docs/feats/fpga-register-map.md`
-  - `docs/feats/server-mmio-contract.md`
-  - `fpga-deploy.sh`
+- older docs and handoffs may still mention `0x40000000`
+- the live sources now use `0x42000000`
 
-## Relevant files
+---
 
-| Area | File |
-|------|------|
-| End-state architecture and wiring intent | `README.md` |
-| Current board wiring contract | `docs/feats/board-io-wiring.md` |
-| Current FPGA register map | `docs/feats/fpga-register-map.md` |
-| Current server MMIO contract | `docs/feats/server-mmio-contract.md` |
-| Current server behavior | `docs/feats/server.md` |
-| FPGA deploy script | `fpga-deploy.sh` |
-| Server deploy script | `server-deploy.sh` |
-| Current MMIO base | `server/memory_map.h` |
-| FPGA AXI slave reset defaults | `fpga/rtl/ads1278_axi_slave.sv` |
-| EXTCLK generator behavior | `fpga/rtl/ads1278_extclk_gen.v` |
-| SYNC pulse behavior | `fpga/rtl/ads1278_sync_pulse.v` |
-| SPI TDM behavior | `fpga/rtl/ads1278_spi_tdm.v` |
-| MMIO debug helper source | `server/rpdevmem.c` |
-| Prior recovery context | `docs/handoffs/20260407_stock-fpga-recovery.md` |
+## How To Use `devmem`
 
-## Problem and reproduction
+This checklist uses `devmem` a lot. Here is the simple mental model:
 
-Observed without the ADS1278 board connected:
+- `devmem` reads or writes one memory-mapped register directly from Linux
+- it talks to the live FPGA register block
+- reads are safe for this checklist
+- writes take effect immediately
 
-1. Deploy the FPGA bitstream.
-2. Start the ARM server on the Red Pitaya:
+Basic forms:
 
 ```bash
-/usr/local/bin/ads1278-server
+devmem <address> 32
+devmem <address> 32 <value>
 ```
 
-3. Start the Python client and connect to the board on port `5000`.
+Examples:
 
-Observed behavior:
+```bash
+devmem 0x42000028 32
+devmem 0x42000028 32 625
+devmem 0x42000028 32 0x271
+devmem 0x42000024 32 0x00000002
+```
 
-- server prints only:
+What those mean:
+
+- `devmem 0x42000028 32`
+  - read the 32-bit `EXTCLK_DIV` register
+- `devmem 0x42000028 32 625`
+  - write decimal `625`
+- `devmem 0x42000028 32 0x271`
+  - write the same value in hex
+- `devmem 0x42000024 32 0x00000002`
+  - set `CTRL[1] = 1`, which enables acquisition and `EXTCLK`
+
+Typical output format:
 
 ```text
-Listening on port 5000 using /dev/mem
+0x00000271
 ```
 
-- client connects successfully,
-- capability line is `RP_CAP:ads1278_v1`,
-- status is green,
-- `SAMPLE seq` and `frame_cnt` are green and static,
-- `frame_cnt` is `0`,
-- `enabled` is `no`,
-- `overflow` is `no`,
-- `divider` reports `625`,
-- plots are blank,
-- attempts to change the divider appear to snap back to `625`.
+That means the 32-bit register currently contains hex `0x271`, which is decimal `625`.
 
-Interpretation:
+### Quick decoding guide
 
-- The quiet server on connect is expected.
-- The initial green client state is expected.
-- Static zero counters and blank plots are expected if there is no advancing acquisition frame source.
-- Divider snapping back to `625` is not something to assume away; it means the latest FPGA snapshot still reported `625`, so explicit read/write validation is still required before board bring-up.
+#### `CTRL`
 
-## Success criteria
+- bit `1` = enable
+- bit `0` = sync trigger
 
-Do not proceed to full ADC wiring until all of the following are true:
+Useful values:
 
-- FPGA bitstream loads and the board remains reachable over SSH.
-- FPGA manager reports `operating`.
-- `devmem` reads at `0x42000000`-based offsets do not bus-fault.
-- `EXTCLK_DIV` can be written and read back at least once.
-- `CTRL` enable can be written and read back.
-- `EXTCLK` is visible on a scope on the Red Pitaya output pin after enable.
-- `/SYNC` is visible as an active-low pulse on command.
-- `SCLK` remains idle low with no `/DRDY` source attached.
-- The server starts and the client connects.
-- Client commands produce sensible `ACK` behavior and updated fields.
+- `0x00000000` = disabled
+- `0x00000002` = enabled
+- `0x00000001` = one-shot sync trigger while otherwise disabled
+- `0x00000003` = enabled plus sync trigger in the same write
 
-## Manual QA checklist
+#### `EXTCLK_DIV`
 
-### 0. Preconditions
+- raw value is the divider
+- `0x00000271` = `625`
+- `0x000003e8` = `1000`
 
-- Use the current bitstream and server from this repo.
-- Use the current MMIO base `0x42000000`.
+#### `STATUS`
+
+- bit `0` = `new_data`
+- bit `1` = `overflow`
+- bits `[31:16]` = `frame_cnt`
+
+Examples:
+
+- `0x00000000`
+  - `frame_cnt = 0`
+  - `overflow = no`
+  - `new_data = no`
+- `0x00030002`
+  - `frame_cnt = 3`
+  - `overflow = yes`
+  - `new_data = no`
+- `0x00030003`
+  - `frame_cnt = 3`
+  - `overflow = yes`
+  - `new_data = yes`
+
+Important note:
+
+- `new_data` is pulse-like in the current RTL
+- you may miss it in polling
+- for this checklist, `frame_cnt` is the more useful signal
+
+### Practical rule
+
+If you write a register and then immediately read it back:
+
+- if the value matches, the MMIO path is probably working
+- if it snaps back to the old value, the write did not stick or you are not talking to the expected register block
+- if `devmem` faults or hangs, stop and fix MMIO first
+
+---
+
+## Before You Start
+
+- Keep the ADS1278EVM disconnected for the first half of this checklist.
 - Have SSH access to the Red Pitaya as `root`.
-- Have a scope probe ground lead and at least one probe channel available.
-- Keep the ADS1278EVM disconnected during sections 1 through 6.
+- Have a scope probe ground clip and at least one probe channel ready.
+- Use Red Pitaya `GND` as the scope reference.
 
-If you need to rebuild first:
+If you need fresh software artifacts first:
 
 ```bash
 ./server-build-cross.sh --rebuild
@@ -165,9 +187,29 @@ Client launch from repo root:
 .venv/bin/python client/main.py
 ```
 
+---
+
+## Quick Go / No-Go Gate
+
+Do not wire the ADS1278EVM yet unless all of these are true:
+
+- FPGA bitstream loads and the board stays reachable
+- FPGA manager reports `operating`
+- `devmem` reads at `0x42000000` do not bus-fault
+- `EXTCLK_DIV` can be written and read back
+- `CTRL` enable can be written and read back
+- `EXTCLK` appears on the scope after enable
+- `/SYNC` pulses on command
+- `SCLK` stays idle low with no `/DRDY`
+- server/client commands produce sensible `ACK` behavior
+
+---
+
+## Stage 1: Validate With No ADS1278 Connected
+
 ### 1. Host-side artifact sanity
 
-From the repo root, verify the expected artifacts exist:
+From the repo root:
 
 ```bash
 ls -l fpga/work125_14/rp_ads1278.runs/impl_1/ads1278.bit.bin
@@ -182,8 +224,10 @@ ls -l build-docker/server
 
 Expected:
 
-- `ads1278.bit.bin` exists.
-- An ARM server binary exists under `build-cross/server` or `build-docker/server`.
+- `ads1278.bit.bin` exists
+- an ARM server binary exists under `build-cross/server` or `build-docker/server`
+
+---
 
 ### 2. Deploy FPGA and verify board stability
 
@@ -193,7 +237,7 @@ From the repo root:
 ./fpga-deploy.sh --target rp125_14 --ip <RP_IP>
 ```
 
-Then verify basic SSH reachability:
+Then verify SSH still works:
 
 ```bash
 ssh root@<RP_IP> 'echo alive'
@@ -207,20 +251,22 @@ ssh root@<RP_IP> 'cat /sys/class/fpga_manager/fpga0/state'
 
 Expected:
 
-- deploy completes successfully,
-- board does not reset,
-- SSH still works,
-- FPGA manager reports `operating`.
+- deploy completes successfully
+- board does not reset
+- SSH still works
+- FPGA manager reports `operating`
 
-Stop here if any of these happen:
+Stop if:
 
-- board becomes unreachable,
-- FPGA manager is not `operating`,
-- `fpgautil` reports failure.
+- board becomes unreachable
+- FPGA manager is not `operating`
+- `fpgautil` reports failure
+
+---
 
 ### 3. Raw MMIO sanity before enabling anything
 
-On the Red Pitaya:
+SSH into the board:
 
 ```bash
 ssh root@<RP_IP>
@@ -236,26 +282,32 @@ devmem 0x42000028 32
 
 Expected reset-state values:
 
-- `CTRL` should be `0x00000000`
-- `EXTCLK_DIV` should be `0x00000271`
-- `STATUS` should have:
+- `CTRL` should read `0x00000000`
+- `EXTCLK_DIV` should read `0x00000271`
+- `STATUS` should indicate:
   - `frame_cnt = 0`
   - `overflow = 0`
-  - `new_data` likely `0`
+  - `new_data` probably `0`
 
-Useful decoding:
+What this proves:
 
-- `CTRL` bit `1` = enable
-- `CTRL` bit `0` = sync trigger
-- `STATUS` bit `1` = overflow
-- `STATUS` bit `0` = new_data
-- `STATUS[31:16]` = frame counter
+- the AXI register block is reachable
+- the current address map is probably correct
+- reset defaults match the RTL and docs
 
-If `devmem` faults or hangs here, do not continue to wiring.
+Stop if:
 
-### 4. MMIO write/readback validation
+- any read bus-faults
+- `devmem` hangs
+- values are wildly inconsistent with reset state
 
-Still on the Red Pitaya, test `EXTCLK_DIV` readback explicitly.
+---
+
+### 4. MMIO write / readback validation
+
+This is the most important early software-side check.
+
+#### 4a. Test `EXTCLK_DIV`
 
 Read current divider:
 
@@ -263,14 +315,18 @@ Read current divider:
 devmem 0x42000028 32
 ```
 
-Write a new divider value that is easy to distinguish from `625`. Example: `1000`:
+Write `1000` and read it back:
 
 ```bash
 devmem 0x42000028 32 1000
 devmem 0x42000028 32
 ```
 
-Then restore default:
+Expected:
+
+- readback should be `0x000003e8`
+
+Restore default:
 
 ```bash
 devmem 0x42000028 32 625
@@ -279,10 +335,11 @@ devmem 0x42000028 32
 
 Expected:
 
-- write to `1000` reads back as `0x000003e8`,
-- write back to `625` reads back as `0x00000271`.
+- readback should be `0x00000271`
 
-Then test enable bit readback:
+#### 4b. Test enable bit
+
+Enable:
 
 ```bash
 devmem 0x42000024 32 0x00000002
@@ -291,9 +348,9 @@ devmem 0x42000024 32
 
 Expected:
 
-- readback is `0x00000002`.
+- readback should be `0x00000002`
 
-Then disable again:
+Disable again:
 
 ```bash
 devmem 0x42000024 32 0x00000000
@@ -303,59 +360,69 @@ devmem 0x42000020 32
 
 Expected:
 
-- `CTRL` goes back to `0`,
-- `frame_cnt` remains or returns to `0`,
-- `overflow` is clear.
+- `CTRL` goes back to `0`
+- `frame_cnt` remains or returns to `0`
+- `overflow` is clear
 
-If divider or enable does not read back correctly, do not proceed to wiring. Resolve MMIO first.
+What this proves:
+
+- writes are sticking
+- the server and client should later be able to control the FPGA through the same registers
+
+Stop if:
+
+- divider or enable does not read back correctly
+- values immediately snap back without explanation
+
+---
 
 ### 5. Scope validation on the unconnected Red Pitaya pins
 
 Do this with the ADS1278EVM still disconnected.
 
-Use Red Pitaya `GND` as scope ground reference.
-
-Probe targets from the implemented mapping:
+Probe these Red Pitaya signals:
 
 - `exp_p_io[4]` = `EXTCLK`
 - `exp_p_io[3]` = `/SYNC`
 - `exp_p_io[0]` = `SCLK`
 
-Also keep the board wiring doc open:
+Keep `docs/feats/board-io-wiring.md` open while probing.
 
-- `docs/feats/board-io-wiring.md`
+---
 
 #### 5a. Verify `EXTCLK` is off when disabled
 
-On the board:
+On the Red Pitaya:
 
 ```bash
 devmem 0x42000024 32 0x00000000
 ```
 
-Expected on scope:
+Expected on the scope:
 
-- `EXTCLK` held low,
-- `SCLK` low,
-- `/SYNC` high.
+- `EXTCLK` held low
+- `SCLK` low
+- `/SYNC` high
+
+---
 
 #### 5b. Verify `EXTCLK` appears when enabled
 
-On the board:
+On the Red Pitaya:
 
 ```bash
 devmem 0x42000028 32 625
 devmem 0x42000024 32 0x00000002
 ```
 
-Expected on scope:
+Expected on the scope:
 
-- `EXTCLK` is a square wave at about `100 kHz`,
-- duty cycle near 50%,
-- `/SYNC` remains high unless triggered,
-- `SCLK` remains low because no `/DRDY` is present.
+- `EXTCLK` is a square wave near `100 kHz`
+- duty cycle is near 50%
+- `/SYNC` stays high unless triggered
+- `SCLK` remains low because there is no `/DRDY`
 
-Optional alternate divider values:
+Optional divider experiments:
 
 - `1000` -> about `62.5 kHz`
 - `63` -> about `992 kHz`
@@ -370,23 +437,25 @@ devmem 0x42000028 32 625
 
 Expected:
 
-- `EXTCLK` frequency changes accordingly.
+- the `EXTCLK` frequency changes accordingly
+
+---
 
 #### 5c. Verify `/SYNC` pulse
 
-Keep acquisition disabled first:
+First, test while disabled:
 
 ```bash
 devmem 0x42000024 32 0x00000001
 ```
 
-Expected on scope:
+Expected on the scope:
 
-- `/SYNC` pulses low once,
-- pulse width is about one `EXTCLK` period,
-- at divider `625`, pulse width should be about `10 us`.
+- `/SYNC` pulses low once
+- pulse width is about one `EXTCLK` period
+- at divider `625`, pulse width should be about `10 us`
 
-Then test while enable is set:
+Then test while enabled:
 
 ```bash
 devmem 0x42000024 32 0x00000002
@@ -395,21 +464,27 @@ devmem 0x42000024 32 0x00000003
 
 Expected:
 
-- `EXTCLK` continues toggling,
-- `/SYNC` still pulses low once,
-- `CTRL[0]` auto-clears in hardware after the write.
+- `EXTCLK` keeps toggling
+- `/SYNC` still pulses low once
+- the sync-trigger bit auto-clears in hardware
+
+---
 
 #### 5d. Verify `SCLK` idle behavior
 
-With no ADC and no `/DRDY` source attached, do not expect periodic `SCLK`.
+With no ADC and no `/DRDY` source:
 
-Expected on scope:
+- do not expect periodic `SCLK`
 
-- `SCLK` stays low and quiet.
+Expected on the scope:
 
-If `SCLK` is free-running with no `/DRDY`, that is unexpected and should be investigated before wiring the ADC.
+- `SCLK` stays low and quiet
 
-### 6. Server/client validation with no ADS1278 connected
+If `SCLK` free-runs with no `/DRDY`, stop and investigate before wiring the ADC.
+
+---
+
+### 6. Server / client validation with no ADS1278 connected
 
 Deploy the server binary from the repo root:
 
@@ -417,7 +492,7 @@ Deploy the server binary from the repo root:
 ./server-deploy.sh --ip <RP_IP>
 ```
 
-Start the server on the Red Pitaya:
+Start the server:
 
 ```bash
 ssh root@<RP_IP> '/usr/local/bin/ads1278-server'
@@ -431,7 +506,7 @@ Listening on port 5000 using /dev/mem
 
 Do not expect a new log line when the client connects successfully.
 
-Start the client from the repo root:
+Now start the client from the repo root:
 
 ```bash
 .venv/bin/python client/main.py
@@ -444,27 +519,33 @@ In the client:
 
 Expected immediately after connect:
 
-- green connection indicator,
-- capability shown as `RP_CAP:ads1278_v1`,
-- `frame_cnt: 0`,
-- `enabled: no`,
-- `overflow: no`,
-- `divider: 625`,
-- blank or effectively empty plots,
-- status text similar to `SAMPLE seq=0 frame_cnt=0`.
+- green connection indicator
+- capability shown as `RP_CAP:ads1278_v1`
+- `frame_cnt: 0`
+- `enabled: no`
+- `overflow: no`
+- `divider: 625`
+- blank or effectively empty plots
+- status text similar to `SAMPLE seq=0 frame_cnt=0`
 
-Now test GUI command round-trips.
+Interpretation:
+
+- this quiet, static behavior is normal with no ADC frames arriving
+
+---
 
 #### 6a. Enable
 
-In the client, press `Enable`.
+Press `Enable` in the client.
 
 Expected:
 
-- client status changes to an `ACK`,
-- `enabled` changes to `yes`,
-- `divider` stays at the current value,
-- `EXTCLK` appears on the scope if you are still probing it.
+- client status changes to an `ACK`
+- `enabled` changes to `yes`
+- `divider` stays at the current value
+- `EXTCLK` appears on the scope if you are still probing it
+
+---
 
 #### 6b. Disable
 
@@ -472,26 +553,30 @@ Press `Disable`.
 
 Expected:
 
-- `ACK`,
-- `enabled` changes to `no`,
-- `EXTCLK` stops.
+- `ACK`
+- `enabled` changes to `no`
+- `EXTCLK` stops
+
+---
 
 #### 6c. Set divider
 
-Set the divider to `1000` in the GUI and press `Set divider`.
+Set the divider to `1000` and press `Set divider`.
 
 Expected:
 
-- client shows an `ACK`,
-- `divider` label changes to `1000`,
-- scope shows `EXTCLK` near `62.5 kHz` if enabled.
+- client shows an `ACK`
+- `divider` label changes to `1000`
+- if enabled, the scope shows `EXTCLK` near `62.5 kHz`
 
 Then set it back to `625`.
 
 Important interpretation:
 
-- If the GUI snaps back to `625` immediately after setting `1000`, the FPGA snapshot still reported `625`.
-- That is a real MMIO/write-readback problem, not just a cosmetic issue, because the GUI refreshes from the latest server message.
+- if the GUI snaps back to `625`, the latest FPGA snapshot still reported `625`
+- that is a real MMIO/readback problem, not just a cosmetic GUI issue
+
+---
 
 #### 6d. SYNC
 
@@ -499,42 +584,32 @@ Press `SYNC`.
 
 Expected:
 
-- client shows an `ACK`,
-- `/SYNC` pulse is visible on the scope.
+- client shows an `ACK`
+- `/SYNC` pulse is visible on the scope
 
-### 7. Go/no-go gate before wiring the ADS1278EVM
+---
 
-You may proceed to physical wiring only if all items below are true:
+## Stage 2: Wire The ADS1278EVM
 
-- board survives FPGA programming,
-- raw `devmem` reads and writes work at `0x42000000`,
-- `EXTCLK_DIV` readback works,
-- enable readback works,
-- `EXTCLK` is visible and follows divider changes,
-- `/SYNC` pulse is visible,
-- `SCLK` is not doing anything surprising without `/DRDY`,
-- server/client control path works,
-- there is no unexplained divider snap-back.
+Do this only after Stage 1 passes.
 
-If any of the above fail, stop and fix that layer first.
+Power down or at least avoid hot-plugging if you are not fully confident in the setup.
 
-### 8. Wiring checklist for first physical bring-up
+Before wiring, confirm the ADS1278EVM is configured for:
 
-Power down or at least avoid hot-plugging if you are not fully confident in the ground and signal integrity setup.
+- high-resolution mode
+- SPI output
+- TDM on `DOUT1`
+- external clock input
+- fixed channel ordering on `DOUT1`
 
-Before wiring:
+Also confirm:
 
-- confirm the ADS1278EVM is configured for:
-  - high-resolution mode,
-  - SPI output,
-  - TDM on `DOUT1`,
-  - external clock input,
-  - fixed channel order on `DOUT1`,
-- confirm `DIN` is strapped low,
-- confirm `CS` is unused and left unconnected,
-- confirm all relevant digital IOs are compatible with `3.3V` CMOS levels before first power-up.
+- `DIN` is strapped low
+- `CS` is unused and left unconnected
+- the relevant digital IOs are compatible with `3.3V` CMOS levels
 
-Current intended signal mapping:
+Current intended mapping:
 
 - Red Pitaya `exp_p_io[0]` -> ADS1278EVM `SCLK`
 - Red Pitaya `exp_p_io[1]` <- ADS1278EVM `DOUT1`
@@ -554,35 +629,46 @@ Recommended staged wiring order:
 
 Specific caution:
 
-- `EXTCLK` is the mechanically awkward connection because the ADS1278EVM expects clock at an SMA input.
-- Keep that path short and well-grounded.
-- If possible, verify `EXTCLK` both at the Red Pitaya source pin and at the ADS1278EVM destination before expecting real acquisition.
+- `EXTCLK` is the awkward path because the EVM expects clock at an SMA input
+- keep that path short and well grounded
+- if possible, verify `EXTCLK` both at the Red Pitaya source and at the EVM destination
 
-### 9. First powered wired bring-up
+---
 
-After wiring, repeat the minimal safe sequence.
+## Stage 3: First Powered Wired Bring-Up
 
-#### 9a. FPGA load and raw MMIO
+### 1. Repeat the core MMIO checks
 
-Repeat sections 2 through 4 first. Do not assume they still pass after wiring.
+Do not assume the wiring changed nothing.
 
-#### 9b. Scope checks with the EVM attached
+Repeat:
+
+- FPGA load
+- `STATUS` / `CTRL` / `EXTCLK_DIV` reads
+- divider write/readback
+- enable write/readback
+
+---
+
+### 2. Repeat the scope checks with the EVM attached
 
 Probe:
 
-- `EXTCLK` at the EVM side if possible,
-- `/DRDY_FSYNC`,
-- `SCLK`,
-- optionally `/SYNC`.
+- `EXTCLK` at the EVM side if possible
+- `/DRDY_FSYNC`
+- `SCLK`
+- optionally `/SYNC`
 
 Expected:
 
-- after enable, `EXTCLK` is present at the EVM,
-- `/DRDY_FSYNC` should now show ADC-driven activity if the EVM is clocked and configured correctly,
-- `SCLK` should now burst in response to `/DRDY` falling edges,
-- `/SYNC` should still pulse on command.
+- after enable, `EXTCLK` is present at the EVM
+- `/DRDY_FSYNC` should now show ADC-driven activity if the EVM is clocked and strapped correctly
+- `SCLK` should now burst in response to `/DRDY` falling edges
+- `/SYNC` should still pulse on command
 
-#### 9c. Server/client functional check
+---
+
+### 3. Repeat the server / client functional check
 
 Run the server:
 
@@ -600,49 +686,64 @@ Then:
 
 1. Connect.
 2. Press `Enable`.
-3. Watch the scope and the client.
+3. Watch the scope and the client together.
 
 Expected:
 
-- `frame_cnt` starts advancing,
-- plots begin updating,
-- channel data is no longer static zero,
-- `SCLK` bursts line up with `/DRDY`,
-- changing `EXTCLK_DIV` changes data rate behavior,
-- `overflow` remains `no` at conservative clocking.
+- `frame_cnt` starts advancing
+- plots begin updating
+- channel data is no longer static zero
+- `SCLK` bursts line up with `/DRDY`
+- changing `EXTCLK_DIV` changes acquisition behavior
+- `overflow` remains `no` at conservative clocking
 
 Recommended first divider values:
 
-- start with `625` (`100 kHz EXTCLK`),
-- if behavior is stable, optionally try `1000` and `250`,
-- do not jump straight to the minimum divider during first bring-up.
+- start with `625` (`100 kHz EXTCLK`)
+- if stable, optionally try `1000` and `250`
+- do not jump straight to the minimum divider during first bring-up
 
-### 10. Failure signatures and what they likely mean
+---
 
-- Board resets or SSH dies after `fpgautil`:
-  - FPGA integration problem is still present.
-- `devmem` at `0x42000000` bus-faults:
-  - wrong design loaded, wrong MMIO base, or broken AXI path.
-- `EXTCLK_DIV` always reads back `625` after writes:
-  - MMIO writes are not sticking or readback is not from the intended register block.
-- Enable bit does not read back:
-  - same class of MMIO/control problem.
-- `EXTCLK` missing after enable:
-  - control write failed, wrong pin, or output path issue.
-- `/SYNC` missing on command:
-  - control path issue or wrong pin probe.
-- `SCLK` free-runs without `/DRDY`:
-  - unexpected RTL behavior or wrong probe point.
-- `EXTCLK` exists on Red Pitaya but not at the EVM:
-  - board-level wiring or signal integrity issue.
-- `/DRDY` never toggles with the EVM attached:
-  - EVM not correctly strapped, not clocked, not powered as expected, or `EXTCLK` not reaching the ADC.
-- `frame_cnt` still stays at `0` with EVM attached:
-  - no real completed captures; inspect `/DRDY`, `EXTCLK`, `SCLK`, and `DOUT1`.
+## Failure Signatures
 
-## Recommended operator sequence
+Use this as a quick diagnosis map.
 
-Use this order and do not skip ahead:
+- Board resets or SSH dies after `fpgautil`
+  - the FPGA integration problem is not fully fixed
+
+- `devmem` at `0x42000000` bus-faults
+  - wrong design loaded, wrong address, or broken AXI path
+
+- `EXTCLK_DIV` always reads back `625`
+  - MMIO writes are not sticking or readback is not from the intended register block
+
+- Enable bit does not read back
+  - same class of MMIO/control problem
+
+- `EXTCLK` missing after enable
+  - control write failed, wrong pin, or output path problem
+
+- `/SYNC` missing on command
+  - control path issue or wrong probe point
+
+- `SCLK` free-runs without `/DRDY`
+  - unexpected RTL behavior or wrong probe point
+
+- `EXTCLK` exists on Red Pitaya but not at the EVM
+  - board-level wiring or signal integrity issue
+
+- `/DRDY` never toggles with the EVM attached
+  - the EVM is not correctly strapped, not correctly clocked, or not receiving `EXTCLK`
+
+- `frame_cnt` stays at `0` with the EVM attached
+  - no completed captures; inspect `/DRDY`, `EXTCLK`, `SCLK`, and `DOUT1`
+
+---
+
+## Recommended Operator Sequence
+
+Use this exact order:
 
 1. Validate FPGA load stability.
 2. Validate raw MMIO at `0x42000000`.
@@ -652,7 +753,29 @@ Use this order and do not skip ahead:
 6. Validate server/client behavior with no ADC attached.
 7. Wire the ADS1278EVM carefully.
 8. Repeat the raw MMIO and scope checks with the EVM attached.
-9. Only then attempt actual acquisition and client plotting.
+9. Only then attempt live acquisition and client plotting.
+
+---
+
+## Relevant Files
+
+| Area | File |
+|------|------|
+| End-state architecture and wiring intent | `README.md` |
+| Current board wiring contract | `docs/feats/board-io-wiring.md` |
+| Current FPGA register map | `docs/feats/fpga-register-map.md` |
+| Current server MMIO contract | `docs/feats/server-mmio-contract.md` |
+| Current server behavior | `docs/feats/server.md` |
+| FPGA deploy script | `fpga-deploy.sh` |
+| Server deploy script | `server-deploy.sh` |
+| Current MMIO base | `server/memory_map.h` |
+| FPGA AXI slave reset defaults | `fpga/rtl/ads1278_axi_slave.sv` |
+| EXTCLK generator behavior | `fpga/rtl/ads1278_extclk_gen.v` |
+| SYNC pulse behavior | `fpga/rtl/ads1278_sync_pulse.v` |
+| SPI TDM behavior | `fpga/rtl/ads1278_spi_tdm.v` |
+| Prior recovery context | `docs/handoffs/20260407_stock-fpga-recovery.md` |
+
+---
 
 ## References
 
