@@ -227,12 +227,6 @@ proc create_root_design { parentCell } {
    CONFIG.PROTOCOL {AXI4LITE} \
    ] $M_AXI_GP0
 
-  set Vaux0 [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_analog_io_rtl:1.0 Vaux0 ]
-  set Vaux1 [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_analog_io_rtl:1.0 Vaux1 ]
-  set Vaux8 [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_analog_io_rtl:1.0 Vaux8 ]
-  set Vaux9 [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_analog_io_rtl:1.0 Vaux9 ]
-  set Vp_Vn [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_analog_io_rtl:1.0 Vp_Vn ]
-
   # Create ports
   set FCLK_CLK0 [ create_bd_port -dir O -type clk FCLK_CLK0 ]
   set FCLK_CLK1 [ create_bd_port -dir O -type clk FCLK_CLK1 ]
@@ -246,6 +240,7 @@ proc create_root_design { parentCell } {
   set PL_ACLK [ create_bd_port -dir I -type clk -freq_hz 125000000 PL_ACLK ]
   set_property -dict [ list \
    CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0} \
+   CONFIG.ASSOCIATED_RESET {PL_ARESETn} \
  ] $PL_ACLK
   set PL_ARESETn [ create_bd_port -dir I -type rst PL_ARESETn ]
   set_property -dict [ list \
@@ -709,7 +704,7 @@ proc create_root_design { parentCell } {
   connect_bd_net -net processing_system7_FCLK_RESET0_N [get_bd_ports FCLK_RESET0_N] [get_bd_pins processing_system7/FCLK_RESET0_N]
 
   # Create address segments
-  assign_bd_address -offset 0x40000000 -range 0x00001000 -target_address_space [get_bd_addr_spaces processing_system7/Data] [get_bd_addr_segs M_AXI_GP0/Reg] -force
+  assign_bd_address -offset 0x42000000 -range 0x00001000 -target_address_space [get_bd_addr_spaces processing_system7/Data] [get_bd_addr_segs M_AXI_GP0/Reg] -force
 
 
   # Restore current instance

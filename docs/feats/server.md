@@ -26,7 +26,7 @@ Current build and deploy entry points are:
 Current runtime behavior is:
 
 - The binary is `server/server` locally and is deployed as `ads1278-server`.
-- The process maps `0x40000000` for `0x1000` bytes through `/dev/mem`.
+- The process maps `0x42000000` for `0x1000` bytes through `/dev/mem`.
 - The listener accepts one TCP client at a time on port `5000`.
 - On connect, the server sends `RP_CAP:ads1278_v1\n`, then one initial `SAMPLE` message built from the latest coherent snapshot.
 - While a client is connected, the server polls MMIO and emits a new `SAMPLE` only when `frame_cnt` changes.

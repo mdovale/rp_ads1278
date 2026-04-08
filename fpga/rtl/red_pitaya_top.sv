@@ -1,7 +1,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Red Pitaya TOP module for ADS1278 acquisition.
 // Based on RedPitaya axi4lite project; axi4lite_gpio replaced with
-// ads1278_axi_slave.  Expansion pins wired directly to ADS1278 signals.
+// ads1278_axi_slave.  Expansion pins use explicit tri-state buffers so the
+// top-level preserves the stock Red Pitaya inout contract.
 ////////////////////////////////////////////////////////////////////////////////
 
 module red_pitaya_top #(
@@ -45,9 +46,6 @@ module red_pitaya_top #(
   output logic          dac_rst_o  ,
   // PDM DAC
   output logic [ 4-1:0] dac_pwm_o  ,
-  // XADC
-  input  logic [ 5-1:0] vinp_i     ,
-  input  logic [ 5-1:0] vinn_i     ,
   // Expansion connector (directly wired to ADS1278 signals)
   inout  logic [ 8-1:0] exp_p_io   ,
   inout  logic [ 8-1:0] exp_n_io   ,
@@ -57,7 +55,7 @@ module red_pitaya_top #(
   input  logic [ 2-1:0] daisy_p_i  ,
   input  logic [ 2-1:0] daisy_n_i  ,
   // LED
-  inout  logic [ 8-1:0] led_o
+  output logic [ 8-1:0] led_o
 );
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -75,9 +73,8 @@ logic adc_clk_in;
 logic pll_adc_clk;
 logic pll_locked;
 
-// ADC clock/reset
+// ADC clock
 logic adc_clk;
-logic adc_rstn;
 
 // DAC signals
 logic dac_clk_1x;
@@ -108,13 +105,35 @@ BUFG bufg_adc_clk (.O (adc_clk), .I (pll_adc_clk));
 logic top_rst;
 assign top_rst = ~frstn[0] | ~pll_locked;
 
-always_ff @(posedge adc_clk, posedge top_rst)
-if (top_rst) adc_rstn <= 1'b0;
-else         adc_rstn <= ~top_rst;
-
 always_ff @(posedge dac_clk_1x, posedge top_rst)
 if (top_rst) dac_rst  <= 1'b1;
 else         dac_rst  <= top_rst;
+
+// Expansion connector buffering
+logic [8-1:0] exp_p_in;
+logic [8-1:0] exp_p_out;
+logic [8-1:0] exp_p_t;
+logic [8-1:0] exp_n_in;
+logic [8-1:0] exp_n_out;
+logic [8-1:0] exp_n_t;
+
+generate
+for (genvar i = 0; i < 8; i++) begin : gen_exp_iobuf
+  IOBUF iobuf_exp_p (
+    .I  (exp_p_out[i]),
+    .IO (exp_p_io[i]),
+    .O  (exp_p_in[i]),
+    .T  (exp_p_t[i])
+  );
+
+  IOBUF iobuf_exp_n (
+    .I  (exp_n_out[i]),
+    .IO (exp_n_io[i]),
+    .O  (exp_n_in[i]),
+    .T  (exp_n_t[i])
+  );
+end
+endgenerate
 
 ////////////////////////////////////////////////////////////////////////////////
 // ADC IO (active for RP board compatibility)
@@ -172,7 +191,9 @@ gpio_if #(.DW (24)) gpio_dummy ();
 
 logic gpio_irq;
 
-axi4_lite_if bus (.ACLK (adc_clk), .ARESETn (adc_rstn));
+// Keep the PS-facing AXI path on the stock FCLK/reset pair instead of tying it
+// to the ADC PLL domain.
+axi4_lite_if bus (.ACLK (fclk[0]), .ARESETn (frstn[0]));
 
 red_pitaya_ps ps (
   .FIXED_IO_mio       (FIXED_IO_mio     ),
@@ -198,8 +219,6 @@ red_pitaya_ps ps (
   .DDR_we_n      (DDR_we_n   ),
   .fclk_clk_o    (fclk       ),
   .fclk_rstn_o   (frstn      ),
-  .vinp_i        (vinp_i     ),
-  .vinn_i        (vinn_i     ),
   .gpio          (gpio_dummy),
   .irq           (gpio_irq),
   .bus           (bus)
@@ -239,18 +258,29 @@ ads1278_axi_slave #(
 //   exp_p_io[5:7], exp_n_io[0:7] = unused (high-Z)
 ////////////////////////////////////////////////////////////////////////////////
 
-assign exp_p_io[0]   = ads_sclk;
-assign exp_p_io[1]   = 1'bz;
-assign exp_p_io[2]   = 1'bz;
-assign exp_p_io[3]   = ads_sync_n;
-assign exp_p_io[4]   = ads_extclk;
-assign exp_p_io[5]   = 1'bz;
-assign exp_p_io[6]   = 1'bz;
-assign exp_p_io[7]   = 1'bz;
-assign exp_n_io      = 8'bz;
+assign exp_p_out[0] = ads_sclk;
+assign exp_p_out[1] = 1'b0;
+assign exp_p_out[2] = 1'b0;
+assign exp_p_out[3] = ads_sync_n;
+assign exp_p_out[4] = ads_extclk;
+assign exp_p_out[5] = 1'b0;
+assign exp_p_out[6] = 1'b0;
+assign exp_p_out[7] = 1'b0;
 
-assign ads_miso   = exp_p_io[1];
-assign ads_drdy_n = exp_p_io[2];
+assign exp_p_t[0] = 1'b0;
+assign exp_p_t[1] = 1'b1;
+assign exp_p_t[2] = 1'b1;
+assign exp_p_t[3] = 1'b0;
+assign exp_p_t[4] = 1'b0;
+assign exp_p_t[5] = 1'b1;
+assign exp_p_t[6] = 1'b1;
+assign exp_p_t[7] = 1'b1;
+
+assign exp_n_out = 8'h00;
+assign exp_n_t   = 8'hff;
+
+assign ads_miso   = exp_p_in[1];
+assign ads_drdy_n = exp_p_in[2];
 
 ////////////////////////////////////////////////////////////////////////////////
 // LED output (directly driven by ADS1278 status)

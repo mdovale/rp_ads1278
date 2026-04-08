@@ -13,7 +13,7 @@ Define the current PS-to-FPGA MMIO interface clearly enough that the existing `s
 
 ## User-facing behavior
 
-The current FPGA design exposes one AXI4-Lite register block to the PS at physical base address `0x40000000` with a `0x1000` byte aperture. The current `server/` implementation accesses this block through uncached MMIO via `/dev/mem`.
+The current FPGA design exposes one AXI4-Lite register block to the PS at physical base address `0x42000000` with a `0x1000` byte aperture. The current `server/` implementation accesses this block through uncached MMIO via `/dev/mem`.
 
 Current server-visible register map:
 
@@ -60,7 +60,7 @@ For a polling-based server, the current safe interpretation is:
 
 ## Architecture
 
-The MMIO contract is implemented by `ads1278_axi_slave`, which is connected to the PS `M_AXI_GP0` AXI4-Lite path. The block design places that slave at `0x40000000` in PS physical address space.
+The MMIO contract is implemented by `ads1278_axi_slave`, which is connected to the PS `M_AXI_GP0` AXI4-Lite path. The block design places that slave at `0x42000000` in PS physical address space so the stock housekeeping window at `0x40000000` remains available.
 
 Ownership and data flow are:
 
@@ -99,7 +99,7 @@ That means the server contract is intentionally simple today:
 
 Useful checks for the current server bring-up path:
 
-- Map `0x40000000` for `0x1000` bytes and confirm reads do not bus-fault on a correctly loaded design.
+- Map `0x42000000` for `0x1000` bytes and confirm reads do not bus-fault on a correctly loaded design.
 - Read `CTRL`, `EXTCLK_DIV`, and `STATUS` before enabling acquisition to confirm reset-state expectations.
 - Write `CTRL[1] = 1` and confirm `EXTCLK` and acquisition-related behavior begin.
 - Read `frame_cnt` repeatedly and confirm it advances during successful acquisition.

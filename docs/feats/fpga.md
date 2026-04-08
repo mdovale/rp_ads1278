@@ -34,7 +34,7 @@ From the rest of the project’s perspective, the FPGA layer currently provides:
 - one fixed board target: `rp125_14`
 - one implemented board wiring contract on E1
 - one acquisition path for 8-channel ADS1278 TDM capture
-- one MMIO control/status block at `0x40000000`
+- one MMIO control/status block at `0x42000000`
 - one script-based build and deployment path
 
 What is implemented today:
@@ -44,7 +44,7 @@ What is implemented today:
 | Board IO | Uses E1 `exp_p_io[0:4]` for `SCLK`, `DOUT1`, `DRDY`, `SYNC`, and `EXTCLK` |
 | Acquisition | Waits for `DRDY`, delays, clocks in 192 bits, latches CH1..CH8, updates `STATUS` |
 | Control | Software can enable acquisition, trigger `SYNC`, and set `EXTCLK_DIV` |
-| Register access | PS reads and writes a small AXI4-Lite aperture at `0x40000000` |
+| Register access | PS reads and writes a small AXI4-Lite aperture at `0x42000000` |
 | Build/deploy | Repo scripts generate the project, build a bitstream, and deploy a `.bit.bin` to Red Pitaya OS 2.x+ |
 
 What is not implemented today:

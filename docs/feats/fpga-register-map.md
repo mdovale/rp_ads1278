@@ -13,7 +13,7 @@ Define the current register-level behavior that software can rely on when readin
 
 ## User-facing behavior
 
-Software running on the Red Pitaya PS sees a single AXI4-Lite register block at physical base address `0x40000000` with a `0x1000` byte aperture. Reads and writes are 32-bit word-oriented.
+Software running on the Red Pitaya PS sees a single AXI4-Lite register block at physical base address `0x42000000` with a `0x1000` byte aperture. Reads and writes are 32-bit word-oriented.
 
 The current register map is:
 
@@ -48,7 +48,7 @@ Important current caveats:
 
 ## Architecture
 
-The register block is implemented in `ads1278_axi_slave`, which is the AXI4-Lite slave attached to the PS `M_AXI_GP0` path. The block design maps this slave into the PS physical address space at `0x40000000`.
+The register block is implemented in `ads1278_axi_slave`, which is the AXI4-Lite slave attached to the PS `M_AXI_GP0` path. The block design maps this slave into the PS physical address space at `0x42000000`, leaving the stock housekeeping region at `0x40000000` untouched.
 
 Control and data flow are:
 

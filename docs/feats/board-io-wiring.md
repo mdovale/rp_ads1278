@@ -33,11 +33,11 @@ Current wiring expectations:
 - Only the E1 P-side pins listed above are used for the ADS1278 path.
 - `exp_p_io[5]` through `exp_p_io[7]` and all `exp_n_io[*]` lines are currently left unused by this feature path.
 
-The top-level RTL reflects that contract directly:
+The top-level RTL reflects that contract through explicit tri-state buffering on the expansion connector:
 
-- output pins are driven onto `exp_p_io[0]`, `exp_p_io[3]`, and `exp_p_io[4]`
-- input pins are left high-Z at the top level and sampled back from `exp_p_io[1]` and `exp_p_io[2]`
-- the entire `exp_n_io` bus is driven high-Z
+- output pins are driven through `IOBUF` instances onto `exp_p_io[0]`, `exp_p_io[3]`, and `exp_p_io[4]`
+- input pins are read back through the same buffered connector wrapper from `exp_p_io[1]` and `exp_p_io[2]`
+- the entire `exp_n_io` bus remains present but tri-stated because it is unused by the ADS1278 path
 
 ## Architecture
 

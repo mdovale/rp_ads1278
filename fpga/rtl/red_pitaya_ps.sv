@@ -22,8 +22,6 @@ module red_pitaya_ps (
   inout  logic          DDR_we_n   ,
   output logic  [4-1:0] fclk_clk_o ,
   output logic  [4-1:0] fclk_rstn_o,
-  input  logic  [5-1:0] vinp_i,
-  input  logic  [5-1:0] vinn_i,
   gpio_if.m              gpio,
   input logic            irq,
   axi4_lite_if.m         bus

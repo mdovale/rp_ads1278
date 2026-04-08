@@ -1,0 +1,1501 @@
+Building FPGA bitstream...
+Syncing repo to remote...
+
+****** Vivado v2020.1 (64-bit)
+  **** SW Build 2902540 on Wed May 27 19:54:35 MDT 2020
+  **** IP Build 2902112 on Wed May 27 22:43:36 MDT 2020
+    ** Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.
+
+source /home/mdovale/rp_ads1278/fpga/.build_rp125_14_d6aIHZ
+# set rp_model rp125_14
+# source regenerate_project_and_bd.tcl
+## set origin_dir [file normalize .]
+## if {$rp_model == "rp125_14"} {
+##     source [file join $origin_dir tcl board_config_rp125_14.tcl]
+## } else {
+##     puts "Only rp125_14 is supported for rp_ads1278."
+##     exit 1
+## }
+### set board_part       "xc7z010clg400-1"
+### set board_work_dir   "work125_14"
+### set board_top_module "red_pitaya_top"
+### set board_cfg_script "source/cfg_rp125_14/ads1278.tcl"
+### set board_bd_script  "source/system_design_bd_rp125_14/system.tcl"
+### set board_cons_dir   "source/cons_rp125_14"
+## file delete -force ./$board_work_dir
+## source [file join $origin_dir $board_cfg_script]
+### set origin_dir "./"
+### if { [info exists ::origin_dir_loc] } {
+###   set origin_dir $::origin_dir_loc
+### }
+### if {![info exists board_part]} {
+###   source [file join $origin_dir tcl board_config_rp125_14.tcl]
+### }
+### source [file join $origin_dir tcl create_project_common.tcl]
+#### set _proj_name "rp_ads1278"
+#### if {[info exists _xil_proj_name_]} {
+####   set _proj_name $_xil_proj_name_
+#### }
+#### set orig_proj_dir [file normalize "$origin_dir/$board_work_dir"]
+#### if {[info exists rp_force] && $rp_force} {
+####   create_project $_proj_name "./$board_work_dir" -part $board_part -force
+#### } else {
+####   create_project $_proj_name "./$board_work_dir" -part $board_part
+#### }
+#### set proj_dir [get_property directory [current_project]]
+#### set obj [current_project]
+#### set_property -name "default_lib"              -value "xil_defaultlib"                    -objects $obj
+#### set_property -name "ip_cache_permissions"     -value "read write"                        -objects $obj
+#### set_property -name "ip_output_repo"           -value "$proj_dir/$_proj_name.cache/ip"    -objects $obj
+#### set_property -name "part"                     -value "$board_part"                       -objects $obj
+#### set_property -name "sim.ip.auto_export_scripts" -value "1"                              -objects $obj
+#### set_property -name "simulator_language"       -value "Mixed"                             -objects $obj
+#### set_property -name "xpm_libraries"            -value "XPM_CDC XPM_MEMORY"                -objects $obj
+#### if {[string equal [get_filesets -quiet sources_1] ""]} {
+####   create_fileset -srcset sources_1
+#### }
+### set obj [get_filesets sources_1]
+### set files [list \
+###  "[file normalize "$origin_dir/rtl/axi4_lite_if.sv"]"\
+###  "[file normalize "$origin_dir/rtl/gpio_if.sv"]"\
+###  "[file normalize "$origin_dir/rtl/red_pitaya_pll.sv"]"\
+###  "[file normalize "$origin_dir/rtl/red_pitaya_ps.sv"]"\
+###  "[file normalize "$origin_dir/rtl/red_pitaya_top.sv"]"\
+###  "[file normalize "$origin_dir/rtl/ads1278_axi_slave.sv"]"\
+###  "[file normalize "$origin_dir/rtl/ads1278_acq_top.v"]"\
+###  "[file normalize "$origin_dir/rtl/ads1278_spi_tdm.v"]"\
+###  "[file normalize "$origin_dir/rtl/ads1278_extclk_gen.v"]"\
+###  "[file normalize "$origin_dir/rtl/ads1278_sync_pulse.v"]"\
+### ]
+### add_files -norecurse -fileset $obj $files
+### foreach f [list \
+###   "$origin_dir/rtl/axi4_lite_if.sv" \
+###   "$origin_dir/rtl/gpio_if.sv" \
+###   "$origin_dir/rtl/red_pitaya_pll.sv" \
+###   "$origin_dir/rtl/red_pitaya_ps.sv" \
+###   "$origin_dir/rtl/red_pitaya_top.sv" \
+###   "$origin_dir/rtl/ads1278_axi_slave.sv" \
+### ] {
+###   set file_obj [get_files -of_objects [get_filesets sources_1] [file normalize $f]]
+###   set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
+### }
+### set_property -name "top" -value "red_pitaya_top" -objects $obj
+### if {[string equal [get_filesets -quiet constrs_1] ""]} {
+###   create_fileset -constrset constrs_1
+### }
+### set obj [get_filesets constrs_1]
+### set cons_files [list \
+###   "[file normalize "$origin_dir/$board_cons_dir/ports.xdc"]"\
+###   "[file normalize "$origin_dir/$board_cons_dir/clocks.xdc"]"\
+### ]
+### add_files -norecurse -fileset $obj $cons_files
+### current_run -synthesis [get_runs synth_1]
+### current_run -implementation [get_runs impl_1]
+## source [file join $origin_dir $board_bd_script]
+### namespace eval _tcl {
+### proc get_script_folder {} {
+###    set script_path [file normalize [info script]]
+###    set script_folder [file dirname $script_path]
+###    return $script_folder
+### }
+### }
+### variable script_folder
+### set script_folder [_tcl::get_script_folder]
+### set scripts_vivado_version 2020.1
+### set current_vivado_version [version -short]
+### if { [string first $scripts_vivado_version $current_vivado_version] == -1 } {
+###    puts "WARNING: This script was generated using Vivado <$scripts_vivado_version> and is being run in <$current_vivado_version>. Proceeding anyway."
+### }
+### if { [llength [info commands common::send_gid_msg]] == 0 } {
+###    namespace eval common {
+###       proc send_gid_msg {args} {
+###          set severity "INFO"
+###          set message ""
+###          set arg_count [llength $args]
+###          set idx 0
+### 
+###          while { $idx < $arg_count } {
+###             set arg [lindex $args $idx]
+###             if { $arg eq "-severity" && ($idx + 1) < $arg_count } {
+###                set severity [lindex $args [expr {$idx + 1}]]
+###                incr idx 2
+###                continue
+###             }
+###             incr idx
+###          }
+### 
+###          if { $arg_count > 0 } {
+###             set message [lindex $args end]
+###          }
+### 
+###          puts "$severity: $message"
+###          return 0
+###       }
+###    }
+### }
+### set list_projs [get_projects -quiet]
+### if { $list_projs eq "" } {
+###    create_project project_1 myproj -part xc7z010clg400-1
+### }
+### variable design_name
+### set design_name system
+### set errMsg ""
+### set nRet 0
+### set cur_design [current_bd_design -quiet]
+### set list_cells [get_bd_cells -quiet]
+### if { ${design_name} eq "" } {
+###    # USE CASES:
+###    #    1) Design_name not set
+### 
+###    set errMsg "Please set the variable <design_name> to a non-empty value."
+###    set nRet 1
+### 
+### } elseif { ${cur_design} ne "" && ${list_cells} eq "" } {
+###    # USE CASES:
+###    #    2): Current design opened AND is empty AND names same.
+###    #    3): Current design opened AND is empty AND names diff; design_name NOT in project.
+###    #    4): Current design opened AND is empty AND names diff; design_name exists in project.
+### 
+###    if { $cur_design ne $design_name } {
+###       common::send_gid_msg -ssname BD::TCL -id 2001 -severity "INFO" "Changing value of <design_name> from <$design_name> to <$cur_design> since current design is empty."
+###       set design_name [get_property NAME $cur_design]
+###    }
+###    common::send_gid_msg -ssname BD::TCL -id 2002 -severity "INFO" "Constructing design in IPI design <$cur_design>..."
+### 
+### } elseif { ${cur_design} ne "" && $list_cells ne "" && $cur_design eq $design_name } {
+###    # USE CASES:
+###    #    5) Current design opened AND has components AND same names.
+### 
+###    set errMsg "Design <$design_name> already exists in your project, please set the variable <design_name> to another value."
+###    set nRet 1
+### } elseif { [get_files -quiet ${design_name}.bd] ne "" } {
+###    # USE CASES: 
+###    #    6) Current opened design, has components, but diff names, design_name exists in project.
+###    #    7) No opened design, design_name exists in project.
+### 
+###    set errMsg "Design <$design_name> already exists in your project, please set the variable <design_name> to another value."
+###    set nRet 2
+### 
+### } else {
+###    # USE CASES:
+###    #    8) No opened design, design_name not in project.
+###    #    9) Current opened design, has components, but diff names, design_name not in project.
+### 
+###    common::send_gid_msg -ssname BD::TCL -id 2003 -severity "INFO" "Currently there is no design <$design_name> in project, so creating one..."
+### 
+###    create_bd_design $design_name
+### 
+###    common::send_gid_msg -ssname BD::TCL -id 2004 -severity "INFO" "Making design <$design_name> as current_bd_design."
+###    current_bd_design $design_name
+### 
+### }
+INFO: [BD::TCL 103-2003] Currently there is no design <system> in project, so creating one...
+Wrote  : </home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/system.bd> 
+INFO: [BD::TCL 103-2004] Making design <system> as current_bd_design.
+### common::send_gid_msg -ssname BD::TCL -id 2005 -severity "INFO" "Currently the variable <design_name> is equal to \"$design_name\"."
+INFO: [BD::TCL 103-2005] Currently the variable <design_name> is equal to "system".
+### if { $nRet != 0 } {
+###    catch {common::send_gid_msg -ssname BD::TCL -id 2006 -severity "ERROR" $errMsg}
+###    return $nRet
+### }
+### set bCheckIPsPassed 1
+### set bCheckIPs 1
+### if { $bCheckIPs == 1 } {
+###    set list_check_ips "\ 
+### xilinx.com:ip:axi_protocol_converter:2.1\
+### xilinx.com:ip:processing_system7:5.5\
+### "
+### 
+###    set list_ips_missing ""
+###    common::send_gid_msg -ssname BD::TCL -id 2011 -severity "INFO" "Checking if the following IPs exist in the project's IP catalog: $list_check_ips ."
+### 
+###    foreach ip_vlnv $list_check_ips {
+###       set ip_obj [get_ipdefs -all $ip_vlnv]
+###       if { $ip_obj eq "" } {
+###          lappend list_ips_missing $ip_vlnv
+###       }
+###    }
+### 
+###    if { $list_ips_missing ne "" } {
+###       catch {common::send_gid_msg -ssname BD::TCL -id 2012 -severity "ERROR" "The following IPs are not found in the IP Catalog:\n  $list_ips_missing\n\nResolution: Please add the repository containing the IP(s) to the project." }
+###       set bCheckIPsPassed 0
+###    }
+### 
+### }
+INFO: [BD::TCL 103-2011] Checking if the following IPs exist in the project's IP catalog:  
+xilinx.com:ip:axi_protocol_converter:2.1 xilinx.com:ip:processing_system7:5.5  .
+### if { $bCheckIPsPassed != 1 } {
+###   common::send_gid_msg -ssname BD::TCL -id 2023 -severity "WARNING" "Will not continue with creation of design due to the error(s) above."
+###   return 3
+### }
+### proc create_root_design { parentCell } {
+### 
+###   variable script_folder
+###   variable design_name
+### 
+###   if { $parentCell eq "" } {
+###      set parentCell [get_bd_cells /]
+###   }
+### 
+###   # Get object for parentCell
+###   set parentObj [get_bd_cells $parentCell]
+###   if { $parentObj == "" } {
+###      catch {common::send_gid_msg -ssname BD::TCL -id 2090 -severity "ERROR" "Unable to find parent cell <$parentCell>!"}
+###      return
+###   }
+### 
+###   # Make sure parentObj is hier blk
+###   set parentType [get_property TYPE $parentObj]
+###   if { $parentType ne "hier" } {
+###      catch {common::send_gid_msg -ssname BD::TCL -id 2091 -severity "ERROR" "Parent <$parentObj> has TYPE = <$parentType>. Expected to be <hier>."}
+###      return
+###   }
+### 
+###   # Save current instance; Restore later
+###   set oldCurInst [current_bd_instance .]
+### 
+###   # Set parent object as current
+###   current_bd_instance $parentObj
+### 
+### 
+###   # Create interface ports
+###   set DDR [ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:ddrx_rtl:1.0 DDR ]
+###   set FIXED_IO [ create_bd_intf_port -mode Master -vlnv xilinx.com:display_processing_system7:fixedio_rtl:1.0 FIXED_IO ]
+###   set GPIO [ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gpio_rtl:1.0 GPIO ]
+###   set M_AXI_GP0 [ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 M_AXI_GP0 ]
+###   set_property -dict [ list \
+###    CONFIG.ADDR_WIDTH {32} \
+###    CONFIG.DATA_WIDTH {32} \
+###    CONFIG.FREQ_HZ {125000000} \
+###    CONFIG.PROTOCOL {AXI4LITE} \
+###    ] $M_AXI_GP0
+### 
+###   # Create ports
+###   set FCLK_CLK0 [ create_bd_port -dir O -type clk FCLK_CLK0 ]
+###   set FCLK_CLK1 [ create_bd_port -dir O -type clk FCLK_CLK1 ]
+###   set FCLK_CLK2 [ create_bd_port -dir O -type clk FCLK_CLK2 ]
+###   set FCLK_CLK3 [ create_bd_port -dir O -type clk FCLK_CLK3 ]
+###   set FCLK_RESET0_N [ create_bd_port -dir O -type rst FCLK_RESET0_N ]
+###   set FCLK_RESET1_N [ create_bd_port -dir O -type rst FCLK_RESET1_N ]
+###   set FCLK_RESET2_N [ create_bd_port -dir O -type rst FCLK_RESET2_N ]
+###   set FCLK_RESET3_N [ create_bd_port -dir O -type rst FCLK_RESET3_N ]
+###   set IRQ [ create_bd_port -dir I -type intr IRQ ]
+###   set PL_ACLK [ create_bd_port -dir I -type clk -freq_hz 125000000 PL_ACLK ]
+###   set_property -dict [ list \
+###    CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0} \
+###    CONFIG.ASSOCIATED_RESET {PL_ARESETn} \
+###  ] $PL_ACLK
+###   set PL_ARESETn [ create_bd_port -dir I -type rst PL_ARESETn ]
+###   set_property -dict [ list \
+###    CONFIG.POLARITY {ACTIVE_LOW} \
+###  ] $PL_ARESETn
+### 
+###   # Create instance: axi_protocol_converter_0, and set properties
+###   set axi_protocol_converter_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_protocol_converter:2.1 axi_protocol_converter_0 ]
+### 
+###   # Create instance: processing_system7, and set properties
+###   set processing_system7 [ create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7 ]
+###   set_property -dict [ list \
+###    CONFIG.PCW_ACT_APU_PERIPHERAL_FREQMHZ {666.666687} \
+###    CONFIG.PCW_ACT_CAN_PERIPHERAL_FREQMHZ {10.000000} \
+###    CONFIG.PCW_ACT_DCI_PERIPHERAL_FREQMHZ {10.158730} \
+###    CONFIG.PCW_ACT_ENET0_PERIPHERAL_FREQMHZ {125.000000} \
+###    CONFIG.PCW_ACT_ENET1_PERIPHERAL_FREQMHZ {10.000000} \
+###    CONFIG.PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ {125.000000} \
+###    CONFIG.PCW_ACT_FPGA1_PERIPHERAL_FREQMHZ {142.857132} \
+###    CONFIG.PCW_ACT_FPGA2_PERIPHERAL_FREQMHZ {166.666672} \
+###    CONFIG.PCW_ACT_FPGA3_PERIPHERAL_FREQMHZ {200.000000} \
+###    CONFIG.PCW_ACT_PCAP_PERIPHERAL_FREQMHZ {200.000000} \
+###    CONFIG.PCW_ACT_QSPI_PERIPHERAL_FREQMHZ {125.000000} \
+###    CONFIG.PCW_ACT_SDIO_PERIPHERAL_FREQMHZ {100.000000} \
+###    CONFIG.PCW_ACT_SMC_PERIPHERAL_FREQMHZ {10.000000} \
+###    CONFIG.PCW_ACT_SPI_PERIPHERAL_FREQMHZ {200.000000} \
+###    CONFIG.PCW_ACT_TPIU_PERIPHERAL_FREQMHZ {200.000000} \
+###    CONFIG.PCW_ACT_TTC0_CLK0_PERIPHERAL_FREQMHZ {111.111115} \
+###    CONFIG.PCW_ACT_TTC0_CLK1_PERIPHERAL_FREQMHZ {111.111115} \
+###    CONFIG.PCW_ACT_TTC0_CLK2_PERIPHERAL_FREQMHZ {111.111115} \
+###    CONFIG.PCW_ACT_TTC1_CLK0_PERIPHERAL_FREQMHZ {111.111115} \
+###    CONFIG.PCW_ACT_TTC1_CLK1_PERIPHERAL_FREQMHZ {111.111115} \
+###    CONFIG.PCW_ACT_TTC1_CLK2_PERIPHERAL_FREQMHZ {111.111115} \
+###    CONFIG.PCW_ACT_UART_PERIPHERAL_FREQMHZ {100.000000} \
+###    CONFIG.PCW_ACT_WDT_PERIPHERAL_FREQMHZ {111.111115} \
+###    CONFIG.PCW_ARMPLL_CTRL_FBDIV {40} \
+###    CONFIG.PCW_CAN_PERIPHERAL_DIVISOR0 {1} \
+###    CONFIG.PCW_CAN_PERIPHERAL_DIVISOR1 {1} \
+###    CONFIG.PCW_CLK0_FREQ {125000000} \
+###    CONFIG.PCW_CLK1_FREQ {142857132} \
+###    CONFIG.PCW_CLK2_FREQ {166666672} \
+###    CONFIG.PCW_CLK3_FREQ {200000000} \
+###    CONFIG.PCW_CPU_CPU_PLL_FREQMHZ {1333.333} \
+###    CONFIG.PCW_CPU_PERIPHERAL_DIVISOR0 {2} \
+###    CONFIG.PCW_CRYSTAL_PERIPHERAL_FREQMHZ {33.333333} \
+###    CONFIG.PCW_DCI_PERIPHERAL_DIVISOR0 {15} \
+###    CONFIG.PCW_DCI_PERIPHERAL_DIVISOR1 {7} \
+###    CONFIG.PCW_DDRPLL_CTRL_FBDIV {32} \
+###    CONFIG.PCW_DDR_DDR_PLL_FREQMHZ {1066.667} \
+###    CONFIG.PCW_DDR_PERIPHERAL_DIVISOR0 {2} \
+###    CONFIG.PCW_DDR_RAM_HIGHADDR {0x1FFFFFFF} \
+###    CONFIG.PCW_ENET0_ENET0_IO {MIO 16 .. 27} \
+###    CONFIG.PCW_ENET0_GRP_MDIO_ENABLE {1} \
+###    CONFIG.PCW_ENET0_GRP_MDIO_IO {MIO 52 .. 53} \
+###    CONFIG.PCW_ENET0_PERIPHERAL_CLKSRC {IO PLL} \
+###    CONFIG.PCW_ENET0_PERIPHERAL_DIVISOR0 {8} \
+###    CONFIG.PCW_ENET0_PERIPHERAL_DIVISOR1 {1} \
+###    CONFIG.PCW_ENET0_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_ENET0_PERIPHERAL_FREQMHZ {1000 Mbps} \
+###    CONFIG.PCW_ENET0_RESET_ENABLE {0} \
+###    CONFIG.PCW_ENET1_PERIPHERAL_DIVISOR0 {1} \
+###    CONFIG.PCW_ENET1_PERIPHERAL_DIVISOR1 {1} \
+###    CONFIG.PCW_ENET1_RESET_ENABLE {0} \
+###    CONFIG.PCW_ENET_RESET_ENABLE {1} \
+###    CONFIG.PCW_ENET_RESET_SELECT {Share reset pin} \
+###    CONFIG.PCW_EN_CLK1_PORT {1} \
+###    CONFIG.PCW_EN_CLK2_PORT {1} \
+###    CONFIG.PCW_EN_CLK3_PORT {1} \
+###    CONFIG.PCW_EN_EMIO_GPIO {1} \
+###    CONFIG.PCW_EN_EMIO_SPI1 {0} \
+###    CONFIG.PCW_EN_EMIO_TTC0 {1} \
+###    CONFIG.PCW_EN_EMIO_UART0 {0} \
+###    CONFIG.PCW_EN_ENET0 {1} \
+###    CONFIG.PCW_EN_GPIO {1} \
+###    CONFIG.PCW_EN_I2C0 {1} \
+###    CONFIG.PCW_EN_QSPI {1} \
+###    CONFIG.PCW_EN_RST1_PORT {1} \
+###    CONFIG.PCW_EN_RST2_PORT {1} \
+###    CONFIG.PCW_EN_RST3_PORT {1} \
+###    CONFIG.PCW_EN_SDIO0 {1} \
+###    CONFIG.PCW_EN_SPI1 {1} \
+###    CONFIG.PCW_EN_TTC0 {1} \
+###    CONFIG.PCW_EN_UART0 {1} \
+###    CONFIG.PCW_EN_UART1 {1} \
+###    CONFIG.PCW_EN_USB0 {1} \
+###    CONFIG.PCW_FCLK0_PERIPHERAL_DIVISOR0 {4} \
+###    CONFIG.PCW_FCLK0_PERIPHERAL_DIVISOR1 {2} \
+###    CONFIG.PCW_FCLK1_PERIPHERAL_DIVISOR0 {7} \
+###    CONFIG.PCW_FCLK1_PERIPHERAL_DIVISOR1 {1} \
+###    CONFIG.PCW_FCLK2_PERIPHERAL_DIVISOR0 {6} \
+###    CONFIG.PCW_FCLK2_PERIPHERAL_DIVISOR1 {1} \
+###    CONFIG.PCW_FCLK3_PERIPHERAL_DIVISOR0 {5} \
+###    CONFIG.PCW_FCLK3_PERIPHERAL_DIVISOR1 {1} \
+###    CONFIG.PCW_FCLK_CLK1_BUF {TRUE} \
+###    CONFIG.PCW_FCLK_CLK2_BUF {TRUE} \
+###    CONFIG.PCW_FCLK_CLK3_BUF {TRUE} \
+###    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {125} \
+###    CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {142} \
+###    CONFIG.PCW_FPGA2_PERIPHERAL_FREQMHZ {166} \
+###    CONFIG.PCW_FPGA3_PERIPHERAL_FREQMHZ {200} \
+###    CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
+###    CONFIG.PCW_FPGA_FCLK1_ENABLE {1} \
+###    CONFIG.PCW_FPGA_FCLK2_ENABLE {1} \
+###    CONFIG.PCW_FPGA_FCLK3_ENABLE {1} \
+###    CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE {1} \
+###    CONFIG.PCW_GPIO_EMIO_GPIO_IO {24} \
+###    CONFIG.PCW_GPIO_EMIO_GPIO_WIDTH {24} \
+###    CONFIG.PCW_GPIO_MIO_GPIO_ENABLE {1} \
+###    CONFIG.PCW_GPIO_MIO_GPIO_IO {MIO} \
+###    CONFIG.PCW_I2C0_GRP_INT_ENABLE {0} \
+###    CONFIG.PCW_I2C0_I2C0_IO {MIO 50 .. 51} \
+###    CONFIG.PCW_I2C0_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_I2C0_RESET_ENABLE {0} \
+###    CONFIG.PCW_I2C1_RESET_ENABLE {0} \
+###    CONFIG.PCW_I2C_PERIPHERAL_FREQMHZ {111.111115} \
+###    CONFIG.PCW_I2C_RESET_ENABLE {1} \
+###    CONFIG.PCW_I2C_RESET_SELECT {Share reset pin} \
+###    CONFIG.PCW_IOPLL_CTRL_FBDIV {30} \
+###    CONFIG.PCW_IO_IO_PLL_FREQMHZ {1000.000} \
+###    CONFIG.PCW_IRQ_F2P_INTR {1} \
+###    CONFIG.PCW_MIO_0_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_0_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_0_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_0_SLEW {slow} \
+###    CONFIG.PCW_MIO_10_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_10_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_10_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_10_SLEW {slow} \
+###    CONFIG.PCW_MIO_11_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_11_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_11_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_11_SLEW {slow} \
+###    CONFIG.PCW_MIO_12_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_12_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_12_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_12_SLEW {slow} \
+###    CONFIG.PCW_MIO_13_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_13_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_13_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_13_SLEW {slow} \
+###    CONFIG.PCW_MIO_14_DIRECTION {in} \
+###    CONFIG.PCW_MIO_14_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_14_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_14_SLEW {slow} \
+###    CONFIG.PCW_MIO_15_DIRECTION {out} \
+###    CONFIG.PCW_MIO_15_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_15_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_15_SLEW {slow} \
+###    CONFIG.PCW_MIO_16_DIRECTION {out} \
+###    CONFIG.PCW_MIO_16_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_16_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_16_SLEW {fast} \
+###    CONFIG.PCW_MIO_17_DIRECTION {out} \
+###    CONFIG.PCW_MIO_17_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_17_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_17_SLEW {fast} \
+###    CONFIG.PCW_MIO_18_DIRECTION {out} \
+###    CONFIG.PCW_MIO_18_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_18_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_18_SLEW {fast} \
+###    CONFIG.PCW_MIO_19_DIRECTION {out} \
+###    CONFIG.PCW_MIO_19_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_19_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_19_SLEW {fast} \
+###    CONFIG.PCW_MIO_1_DIRECTION {out} \
+###    CONFIG.PCW_MIO_1_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_1_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_1_SLEW {slow} \
+###    CONFIG.PCW_MIO_20_DIRECTION {out} \
+###    CONFIG.PCW_MIO_20_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_20_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_20_SLEW {fast} \
+###    CONFIG.PCW_MIO_21_DIRECTION {out} \
+###    CONFIG.PCW_MIO_21_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_21_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_21_SLEW {fast} \
+###    CONFIG.PCW_MIO_22_DIRECTION {in} \
+###    CONFIG.PCW_MIO_22_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_22_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_22_SLEW {fast} \
+###    CONFIG.PCW_MIO_23_DIRECTION {in} \
+###    CONFIG.PCW_MIO_23_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_23_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_23_SLEW {fast} \
+###    CONFIG.PCW_MIO_24_DIRECTION {in} \
+###    CONFIG.PCW_MIO_24_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_24_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_24_SLEW {fast} \
+###    CONFIG.PCW_MIO_25_DIRECTION {in} \
+###    CONFIG.PCW_MIO_25_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_25_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_25_SLEW {fast} \
+###    CONFIG.PCW_MIO_26_DIRECTION {in} \
+###    CONFIG.PCW_MIO_26_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_26_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_26_SLEW {fast} \
+###    CONFIG.PCW_MIO_27_DIRECTION {in} \
+###    CONFIG.PCW_MIO_27_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_27_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_27_SLEW {fast} \
+###    CONFIG.PCW_MIO_28_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_28_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_28_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_28_SLEW {fast} \
+###    CONFIG.PCW_MIO_29_DIRECTION {in} \
+###    CONFIG.PCW_MIO_29_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_29_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_29_SLEW {fast} \
+###    CONFIG.PCW_MIO_2_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_2_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_2_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_2_SLEW {slow} \
+###    CONFIG.PCW_MIO_30_DIRECTION {out} \
+###    CONFIG.PCW_MIO_30_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_30_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_30_SLEW {fast} \
+###    CONFIG.PCW_MIO_31_DIRECTION {in} \
+###    CONFIG.PCW_MIO_31_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_31_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_31_SLEW {fast} \
+###    CONFIG.PCW_MIO_32_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_32_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_32_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_32_SLEW {fast} \
+###    CONFIG.PCW_MIO_33_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_33_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_33_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_33_SLEW {fast} \
+###    CONFIG.PCW_MIO_34_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_34_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_34_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_34_SLEW {fast} \
+###    CONFIG.PCW_MIO_35_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_35_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_35_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_35_SLEW {fast} \
+###    CONFIG.PCW_MIO_36_DIRECTION {in} \
+###    CONFIG.PCW_MIO_36_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_36_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_36_SLEW {fast} \
+###    CONFIG.PCW_MIO_37_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_37_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_37_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_37_SLEW {fast} \
+###    CONFIG.PCW_MIO_38_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_38_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_38_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_38_SLEW {fast} \
+###    CONFIG.PCW_MIO_39_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_39_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_39_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_39_SLEW {fast} \
+###    CONFIG.PCW_MIO_3_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_3_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_3_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_3_SLEW {slow} \
+###    CONFIG.PCW_MIO_40_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_40_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_40_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_40_SLEW {slow} \
+###    CONFIG.PCW_MIO_41_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_41_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_41_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_41_SLEW {slow} \
+###    CONFIG.PCW_MIO_42_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_42_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_42_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_42_SLEW {slow} \
+###    CONFIG.PCW_MIO_43_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_43_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_43_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_43_SLEW {slow} \
+###    CONFIG.PCW_MIO_44_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_44_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_44_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_44_SLEW {slow} \
+###    CONFIG.PCW_MIO_45_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_45_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_45_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_45_SLEW {slow} \
+###    CONFIG.PCW_MIO_46_DIRECTION {in} \
+###    CONFIG.PCW_MIO_46_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_46_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_46_SLEW {slow} \
+###    CONFIG.PCW_MIO_47_DIRECTION {in} \
+###    CONFIG.PCW_MIO_47_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_47_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_47_SLEW {slow} \
+###    CONFIG.PCW_MIO_48_DIRECTION {out} \
+###    CONFIG.PCW_MIO_48_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_48_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_48_SLEW {slow} \
+###    CONFIG.PCW_MIO_49_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_49_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_49_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_49_SLEW {slow} \
+###    CONFIG.PCW_MIO_4_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_4_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_4_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_4_SLEW {slow} \
+###    CONFIG.PCW_MIO_50_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_50_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_50_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_50_SLEW {slow} \
+###    CONFIG.PCW_MIO_51_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_51_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_51_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_51_SLEW {slow} \
+###    CONFIG.PCW_MIO_52_DIRECTION {out} \
+###    CONFIG.PCW_MIO_52_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_52_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_52_SLEW {slow} \
+###    CONFIG.PCW_MIO_53_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_53_IOTYPE {LVCMOS 2.5V} \
+###    CONFIG.PCW_MIO_53_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_53_SLEW {slow} \
+###    CONFIG.PCW_MIO_5_DIRECTION {inout} \
+###    CONFIG.PCW_MIO_5_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_5_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_5_SLEW {slow} \
+###    CONFIG.PCW_MIO_6_DIRECTION {out} \
+###    CONFIG.PCW_MIO_6_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_6_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_6_SLEW {slow} \
+###    CONFIG.PCW_MIO_7_DIRECTION {out} \
+###    CONFIG.PCW_MIO_7_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_7_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_7_SLEW {slow} \
+###    CONFIG.PCW_MIO_8_DIRECTION {out} \
+###    CONFIG.PCW_MIO_8_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_8_PULLUP {disabled} \
+###    CONFIG.PCW_MIO_8_SLEW {slow} \
+###    CONFIG.PCW_MIO_9_DIRECTION {in} \
+###    CONFIG.PCW_MIO_9_IOTYPE {LVCMOS 3.3V} \
+###    CONFIG.PCW_MIO_9_PULLUP {enabled} \
+###    CONFIG.PCW_MIO_9_SLEW {slow} \
+###    CONFIG.PCW_MIO_TREE_PERIPHERALS {GPIO#Quad SPI Flash#Quad SPI Flash#Quad SPI Flash#Quad SPI Flash#Quad SPI Flash#Quad SPI Flash#GPIO#UART 1#UART 1#SPI 1#SPI 1#SPI 1#SPI 1#UART 0#UART 0#Enet 0#Enet 0#Enet 0#Enet 0#Enet 0#Enet 0#Enet 0#Enet 0#Enet 0#Enet 0#Enet 0#Enet 0#USB 0#USB 0#USB 0#USB 0#USB 0#USB 0#USB 0#USB 0#USB 0#USB 0#USB 0#USB 0#SD 0#SD 0#SD 0#SD 0#SD 0#SD 0#SD 0#SD 0#USB Reset#GPIO#I2C 0#I2C 0#Enet 0#Enet 0} \
+###    CONFIG.PCW_MIO_TREE_SIGNALS {gpio[0]#qspi0_ss_b#qspi0_io[0]#qspi0_io[1]#qspi0_io[2]#qspi0_io[3]/HOLD_B#qspi0_sclk#gpio[7]#tx#rx#mosi#miso#sclk#ss[0]#rx#tx#tx_clk#txd[0]#txd[1]#txd[2]#txd[3]#tx_ctl#rx_clk#rxd[0]#rxd[1]#rxd[2]#rxd[3]#rx_ctl#data[4]#dir#stp#nxt#data[0]#data[1]#data[2]#data[3]#clk#data[5]#data[6]#data[7]#clk#cmd#data[0]#data[1]#data[2]#data[3]#cd#wp#reset#gpio[49]#scl#sda#mdc#mdio} \
+###    CONFIG.PCW_M_AXI_GP0_ENABLE_STATIC_REMAP {0} \
+###    CONFIG.PCW_M_AXI_GP0_THREAD_ID_WIDTH {12} \
+###    CONFIG.PCW_NAND_GRP_D8_ENABLE {0} \
+###    CONFIG.PCW_NAND_PERIPHERAL_ENABLE {0} \
+###    CONFIG.PCW_NOR_GRP_A25_ENABLE {0} \
+###    CONFIG.PCW_NOR_GRP_CS0_ENABLE {0} \
+###    CONFIG.PCW_NOR_GRP_CS1_ENABLE {0} \
+###    CONFIG.PCW_NOR_GRP_SRAM_CS0_ENABLE {0} \
+###    CONFIG.PCW_NOR_GRP_SRAM_CS1_ENABLE {0} \
+###    CONFIG.PCW_NOR_GRP_SRAM_INT_ENABLE {0} \
+###    CONFIG.PCW_NOR_PERIPHERAL_ENABLE {0} \
+###    CONFIG.PCW_OVERRIDE_BASIC_CLOCK {0} \
+###    CONFIG.PCW_PCAP_PERIPHERAL_DIVISOR0 {5} \
+###    CONFIG.PCW_PRESET_BANK1_VOLTAGE {LVCMOS 2.5V} \
+###    CONFIG.PCW_QSPI_GRP_FBCLK_ENABLE {0} \
+###    CONFIG.PCW_QSPI_GRP_IO1_ENABLE {0} \
+###    CONFIG.PCW_QSPI_GRP_SINGLE_SS_ENABLE {1} \
+###    CONFIG.PCW_QSPI_GRP_SINGLE_SS_IO {MIO 1 .. 6} \
+###    CONFIG.PCW_QSPI_GRP_SS1_ENABLE {0} \
+###    CONFIG.PCW_QSPI_PERIPHERAL_CLKSRC {IO PLL} \
+###    CONFIG.PCW_QSPI_PERIPHERAL_DIVISOR0 {8} \
+###    CONFIG.PCW_QSPI_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_QSPI_PERIPHERAL_FREQMHZ {125} \
+###    CONFIG.PCW_QSPI_QSPI_IO {MIO 1 .. 6} \
+###    CONFIG.PCW_SD0_GRP_CD_ENABLE {1} \
+###    CONFIG.PCW_SD0_GRP_CD_IO {MIO 46} \
+###    CONFIG.PCW_SD0_GRP_POW_ENABLE {0} \
+###    CONFIG.PCW_SD0_GRP_WP_ENABLE {1} \
+###    CONFIG.PCW_SD0_GRP_WP_IO {MIO 47} \
+###    CONFIG.PCW_SD0_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_SD0_SD0_IO {MIO 40 .. 45} \
+###    CONFIG.PCW_SDIO_PERIPHERAL_DIVISOR0 {10} \
+###    CONFIG.PCW_SDIO_PERIPHERAL_FREQMHZ {100} \
+###    CONFIG.PCW_SDIO_PERIPHERAL_VALID {1} \
+###    CONFIG.PCW_SINGLE_QSPI_DATA_MODE {x4} \
+###    CONFIG.PCW_SMC_PERIPHERAL_DIVISOR0 {1} \
+###    CONFIG.PCW_SPI0_GRP_SS0_ENABLE {0} \
+###    CONFIG.PCW_SPI0_GRP_SS1_ENABLE {0} \
+###    CONFIG.PCW_SPI0_GRP_SS2_ENABLE {0} \
+###    CONFIG.PCW_SPI0_PERIPHERAL_ENABLE {0} \
+###    CONFIG.PCW_SPI1_GRP_SS0_ENABLE {1} \
+###    CONFIG.PCW_SPI1_GRP_SS0_IO {MIO 13} \
+###    CONFIG.PCW_SPI1_GRP_SS1_ENABLE {0} \
+###    CONFIG.PCW_SPI1_GRP_SS2_ENABLE {0} \
+###    CONFIG.PCW_SPI1_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_SPI1_SPI1_IO {MIO 10 .. 15} \
+###    CONFIG.PCW_SPI_PERIPHERAL_DIVISOR0 {5} \
+###    CONFIG.PCW_SPI_PERIPHERAL_FREQMHZ {200} \
+###    CONFIG.PCW_SPI_PERIPHERAL_VALID {1} \
+###    CONFIG.PCW_S_AXI_HP0_DATA_WIDTH {32} \
+###    CONFIG.PCW_S_AXI_HP1_DATA_WIDTH {32} \
+###    CONFIG.PCW_S_AXI_HP2_DATA_WIDTH {32} \
+###    CONFIG.PCW_S_AXI_HP3_DATA_WIDTH {32} \
+###    CONFIG.PCW_TPIU_PERIPHERAL_DIVISOR0 {1} \
+###    CONFIG.PCW_TTC0_CLK0_PERIPHERAL_FREQMHZ {133.333333} \
+###    CONFIG.PCW_TTC0_CLK1_PERIPHERAL_FREQMHZ {133.333333} \
+###    CONFIG.PCW_TTC0_CLK2_PERIPHERAL_FREQMHZ {133.333333} \
+###    CONFIG.PCW_TTC0_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_TTC0_TTC0_IO {EMIO} \
+###    CONFIG.PCW_TTC_PERIPHERAL_FREQMHZ {50} \
+###    CONFIG.PCW_UART0_GRP_FULL_ENABLE {0} \
+###    CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_UART0_UART0_IO {MIO 14 .. 15} \
+###    CONFIG.PCW_UART1_GRP_FULL_ENABLE {0} \
+###    CONFIG.PCW_UART1_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_UART1_UART1_IO {MIO 8 .. 9} \
+###    CONFIG.PCW_UART_PERIPHERAL_DIVISOR0 {10} \
+###    CONFIG.PCW_UART_PERIPHERAL_FREQMHZ {100} \
+###    CONFIG.PCW_UART_PERIPHERAL_VALID {1} \
+###    CONFIG.PCW_UIPARAM_ACT_DDR_FREQ_MHZ {533.333374} \
+###    CONFIG.PCW_UIPARAM_DDR_BANK_ADDR_COUNT {3} \
+###    CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {16 Bit} \
+###    CONFIG.PCW_UIPARAM_DDR_CL {7} \
+###    CONFIG.PCW_UIPARAM_DDR_COL_ADDR_COUNT {10} \
+###    CONFIG.PCW_UIPARAM_DDR_CWL {6} \
+###    CONFIG.PCW_UIPARAM_DDR_DEVICE_CAPACITY {4096 MBits} \
+###    CONFIG.PCW_UIPARAM_DDR_DRAM_WIDTH {16 Bits} \
+###    CONFIG.PCW_UIPARAM_DDR_ECC {Disabled} \
+###    CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41J256M16 RE-125} \
+###    CONFIG.PCW_UIPARAM_DDR_ROW_ADDR_COUNT {15} \
+###    CONFIG.PCW_UIPARAM_DDR_SPEED_BIN {DDR3_1066F} \
+###    CONFIG.PCW_UIPARAM_DDR_T_FAW {40.0} \
+###    CONFIG.PCW_UIPARAM_DDR_T_RAS_MIN {35.0} \
+###    CONFIG.PCW_UIPARAM_DDR_T_RC {48.91} \
+###    CONFIG.PCW_UIPARAM_DDR_T_RCD {7} \
+###    CONFIG.PCW_UIPARAM_DDR_T_RP {7} \
+###    CONFIG.PCW_USB0_PERIPHERAL_ENABLE {1} \
+###    CONFIG.PCW_USB0_PERIPHERAL_FREQMHZ {60} \
+###    CONFIG.PCW_USB0_RESET_ENABLE {1} \
+###    CONFIG.PCW_USB0_RESET_IO {MIO 48} \
+###    CONFIG.PCW_USB0_USB0_IO {MIO 28 .. 39} \
+###    CONFIG.PCW_USB1_RESET_ENABLE {0} \
+###    CONFIG.PCW_USB_RESET_ENABLE {1} \
+###    CONFIG.PCW_USB_RESET_SELECT {Share reset pin} \
+###    CONFIG.PCW_USE_DMA0 {0} \
+###    CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
+###    CONFIG.PCW_USE_M_AXI_GP1 {0} \
+###    CONFIG.PCW_USE_S_AXI_GP0 {0} \
+###    CONFIG.PCW_USE_S_AXI_HP0 {0} \
+###    CONFIG.PCW_USE_S_AXI_HP1 {0} \
+###    CONFIG.PCW_USE_S_AXI_HP2 {0} \
+###    CONFIG.PCW_USE_S_AXI_HP3 {0} \
+###  ] $processing_system7
+### 
+###   # Create interface connections
+###   connect_bd_intf_net -intf_net axi_protocol_converter_0_M_AXI [get_bd_intf_ports M_AXI_GP0] [get_bd_intf_pins axi_protocol_converter_0/M_AXI]
+###   connect_bd_intf_net -intf_net processing_system7_0_ddr [get_bd_intf_ports DDR] [get_bd_intf_pins processing_system7/DDR]
+###   connect_bd_intf_net -intf_net processing_system7_0_fixed_io [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins processing_system7/FIXED_IO]
+###   connect_bd_intf_net -intf_net processing_system7_GPIO_0 [get_bd_intf_ports GPIO] [get_bd_intf_pins processing_system7/GPIO_0]
+###   connect_bd_intf_net -intf_net processing_system7_M_AXI_GP0 [get_bd_intf_pins axi_protocol_converter_0/S_AXI] [get_bd_intf_pins processing_system7/M_AXI_GP0]
+### 
+###   # Create port connections
+###   connect_bd_net -net IRQ_1 [get_bd_ports IRQ] [get_bd_pins processing_system7/IRQ_F2P]
+###   connect_bd_net -net PL_ACLK_1 [get_bd_ports PL_ACLK] [get_bd_pins axi_protocol_converter_0/aclk] [get_bd_pins processing_system7/M_AXI_GP0_ACLK]
+###   connect_bd_net -net PL_ARESETn_1 [get_bd_ports PL_ARESETn] [get_bd_pins axi_protocol_converter_0/aresetn]
+###   connect_bd_net -net processing_system7_0_fclk_clk2 [get_bd_ports FCLK_CLK2] [get_bd_pins processing_system7/FCLK_CLK2]
+###   connect_bd_net -net processing_system7_0_fclk_reset1_n [get_bd_ports FCLK_RESET1_N] [get_bd_pins processing_system7/FCLK_RESET1_N]
+###   connect_bd_net -net processing_system7_0_fclk_reset2_n [get_bd_ports FCLK_RESET2_N] [get_bd_pins processing_system7/FCLK_RESET2_N]
+###   connect_bd_net -net processing_system7_0_fclk_reset3_n [get_bd_ports FCLK_RESET3_N] [get_bd_pins processing_system7/FCLK_RESET3_N]
+###   connect_bd_net -net processing_system7_FCLK_CLK0 [get_bd_ports FCLK_CLK0] [get_bd_pins processing_system7/FCLK_CLK0]
+###   connect_bd_net -net processing_system7_FCLK_CLK1 [get_bd_ports FCLK_CLK1] [get_bd_pins processing_system7/FCLK_CLK1]
+###   connect_bd_net -net processing_system7_FCLK_CLK3 [get_bd_ports FCLK_CLK3] [get_bd_pins processing_system7/FCLK_CLK3]
+###   connect_bd_net -net processing_system7_FCLK_RESET0_N [get_bd_ports FCLK_RESET0_N] [get_bd_pins processing_system7/FCLK_RESET0_N]
+### 
+###   # Create address segments
+###   assign_bd_address -offset 0x42000000 -range 0x00001000 -target_address_space [get_bd_addr_spaces processing_system7/Data] [get_bd_addr_segs M_AXI_GP0/Reg] -force
+### 
+### 
+###   # Restore current instance
+###   current_bd_instance $oldCurInst
+### 
+###   validate_bd_design
+###   save_bd_design
+### }
+### create_root_design ""
+WARNING: [BD 41-176] The physical port 'S_AXI_GP2_rd_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP2_wr_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP3_rd_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP3_wr_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP2_rd_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP2_wr_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP3_rd_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP3_wr_socket' specified in the portmap, is not found on the block! 
+Slave segment '/M_AXI_GP0/Reg' is being assigned into address space '/processing_system7/Data' at <0x4200_0000 [ 4K ]>.
+WARNING: [BD 41-176] The physical port 'S_AXI_GP2_rd_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP2_wr_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP3_rd_socket' specified in the portmap, is not found on the block! 
+WARNING: [BD 41-176] The physical port 'S_AXI_GP3_wr_socket' specified in the portmap, is not found on the block! 
+Wrote  : </home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/system.bd> 
+## set design_name [get_bd_designs]
+## make_wrapper -files [get_files $design_name.bd] -top -import
+INFO: [BD 41-1662] The design 'system.bd' is already validated. Therefore parameter propagation will not be re-run.
+VHDL Output written to : /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/synth/system.v
+VHDL Output written to : /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/sim/system.v
+VHDL Output written to : /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/hdl/system_wrapper.v
+WARNING: [Vivado 12-3482] The generated wrapper file has already been imported into the project, the imported file is:
+'/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/imports/hdl/system_wrapper.v'
+## set_property top red_pitaya_top [current_fileset]
+# launch_runs impl_1 -to_step write_bitstream -jobs 32
+INFO: [BD 41-1662] The design 'system.bd' is already validated. Therefore parameter propagation will not be re-run.
+VHDL Output written to : /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/synth/system.v
+VHDL Output written to : /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/sim/system.v
+VHDL Output written to : /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/hdl/system_wrapper.v
+WARNING: [IP_Flow 19-4994] Overwriting existing constraint file '/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/ip/system_axi_protocol_converter_0_0/system_axi_protocol_converter_0_0_ooc.xdc'
+INFO: [BD 41-1029] Generation completed for the IP Integrator block axi_protocol_converter_0 .
+WARNING: [IP_Flow 19-5611] Unable to find an associated reset port for the interface 'M_AXI_GP0'. A default connection has been created.
+INFO: [BD 41-1029] Generation completed for the IP Integrator block processing_system7 .
+Exporting to file /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/hw_handoff/system.hwh
+Generated Block Design Tcl file /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/hw_handoff/system_bd.tcl
+Generated Hardware Definition File /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/synth/system.hwdef
+[Wed Apr  8 11:14:23 2026] Launched system_processing_system7_0_synth_1, system_axi_protocol_converter_0_0_synth_1, synth_1...
+Run output will be captured here:
+system_processing_system7_0_synth_1: /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/system_processing_system7_0_synth_1/runme.log
+system_axi_protocol_converter_0_0_synth_1: /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/system_axi_protocol_converter_0_0_synth_1/runme.log
+synth_1: /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/synth_1/runme.log
+[Wed Apr  8 11:14:23 2026] Launched impl_1...
+Run output will be captured here: /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1/runme.log
+launch_runs: Time (s): cpu = 00:00:07 ; elapsed = 00:00:08 . Memory (MB): peak = 2245.258 ; gain = 86.043 ; free physical = 104040 ; free virtual = 121753
+# wait_on_run impl_1
+[Wed Apr  8 11:14:23 2026] Waiting for impl_1 to finish...
+
+*** Running vivado
+    with args -log red_pitaya_top.vdi -applog -m64 -product Vivado -messageDb vivado.pb -mode batch -source red_pitaya_top.tcl -notrace
+
+
+****** Vivado v2020.1 (64-bit)
+  **** SW Build 2902540 on Wed May 27 19:54:35 MDT 2020
+  **** IP Build 2902112 on Wed May 27 22:43:36 MDT 2020
+    ** Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.
+
+source red_pitaya_top.tcl -notrace
+INFO: [IP_Flow 19-234] Refreshing IP repositories
+INFO: [IP_Flow 19-1704] No user IP repositories specified
+INFO: [IP_Flow 19-2313] Loaded Vivado IP repository '/tools/Xilinx/Vivado/2020.1/data/ip'.
+Command: link_design -top red_pitaya_top -part xc7z010clg400-1
+Design is defaulting to srcset: sources_1
+Design is defaulting to constrset: constrs_1
+INFO: [Device 21-403] Loading part xc7z010clg400-1
+INFO: [Project 1-454] Reading design checkpoint '/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/ip/system_axi_protocol_converter_0_0/system_axi_protocol_converter_0_0.dcp' for cell 'ps/system/axi_protocol_converter_0'
+INFO: [Project 1-454] Reading design checkpoint '/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/ip/system_processing_system7_0/system_processing_system7_0.dcp' for cell 'ps/system/processing_system7'
+Netlist sorting complete. Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.01 . Memory (MB): peak = 2099.383 ; gain = 0.000 ; free physical = 103218 ; free virtual = 120937
+INFO: [Netlist 29-17] Analyzing 105 Unisim elements for replacement
+INFO: [Netlist 29-28] Unisim Transformation completed in 0 CPU seconds
+INFO: [Project 1-479] Netlist was created with Vivado 2020.1
+INFO: [Project 1-570] Preparing netlist for logic optimization
+Parsing XDC File [/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/ip/system_processing_system7_0/system_processing_system7_0.xdc] for cell 'ps/system/processing_system7/inst'
+Finished Parsing XDC File [/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.srcs/sources_1/bd/system/ip/system_processing_system7_0/system_processing_system7_0.xdc] for cell 'ps/system/processing_system7/inst'
+Parsing XDC File [/home/mdovale/rp_ads1278/fpga/source/cons_rp125_14/ports.xdc]
+Finished Parsing XDC File [/home/mdovale/rp_ads1278/fpga/source/cons_rp125_14/ports.xdc]
+Parsing XDC File [/home/mdovale/rp_ads1278/fpga/source/cons_rp125_14/clocks.xdc]
+Finished Parsing XDC File [/home/mdovale/rp_ads1278/fpga/source/cons_rp125_14/clocks.xdc]
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 2235.371 ; gain = 0.000 ; free physical = 103167 ; free virtual = 120886
+INFO: [Project 1-111] Unisim Transformation Summary:
+  A total of 16 instances were transformed.
+  IOBUF => IOBUF (IBUF, OBUFT): 16 instances
+
+12 Infos, 0 Warnings, 0 Critical Warnings and 0 Errors encountered.
+link_design completed successfully
+Command: opt_design
+Attempting to get a license for feature 'Implementation' and/or device 'xc7z010'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xc7z010'
+Running DRC as a precondition to command opt_design
+
+Starting DRC Task
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Project 1-461] DRC finished with 0 Errors
+INFO: [Project 1-462] Please refer to the DRC report (report_drc) for more information.
+
+Time (s): cpu = 00:00:00.63 ; elapsed = 00:00:00.59 . Memory (MB): peak = 2235.371 ; gain = 0.000 ; free physical = 103184 ; free virtual = 120903
+
+Starting Cache Timing Information Task
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+INFO: [Timing 38-2] Deriving generated clocks
+Ending Cache Timing Information Task | Checksum: 26c41f2b2
+
+Time (s): cpu = 00:00:02 ; elapsed = 00:00:03 . Memory (MB): peak = 2458.285 ; gain = 222.914 ; free physical = 103085 ; free virtual = 120805
+
+Starting Logic Optimization Task
+
+Phase 1 Retarget
+INFO: [Opt 31-138] Pushed 1 inverter(s) to 1 load pin(s).
+INFO: [Opt 31-49] Retargeted 0 cell(s).
+Phase 1 Retarget | Checksum: 150406245
+
+Time (s): cpu = 00:00:00.08 ; elapsed = 00:00:00.04 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+INFO: [Opt 31-389] Phase Retarget created 2 cells and removed 28 cells
+INFO: [Opt 31-1021] In phase Retarget, 1 netlist objects are constrained preventing optimization. Please run opt_design with -debug_log to get more detail. 
+
+Phase 2 Constant propagation
+INFO: [Opt 31-138] Pushed 0 inverter(s) to 0 load pin(s).
+Phase 2 Constant propagation | Checksum: 1a684ba1f
+
+Time (s): cpu = 00:00:00.09 ; elapsed = 00:00:00.05 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+INFO: [Opt 31-389] Phase Constant propagation created 0 cells and removed 8 cells
+
+Phase 3 Sweep
+Phase 3 Sweep | Checksum: 1c7ed23e9
+
+Time (s): cpu = 00:00:00.16 ; elapsed = 00:00:00.12 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+INFO: [Opt 31-389] Phase Sweep created 1 cells and removed 279 cells
+
+Phase 4 BUFG optimization
+INFO: [Opt 31-194] Inserted BUFG pll/dac_clk_1x_BUFG_inst to drive 17 load(s) on clock net pll/dac_clk_1x_BUFG
+INFO: [Opt 31-194] Inserted BUFG pll/dac_clk_2p_BUFG_inst to drive 1 load(s) on clock net pll/dac_clk_2p_BUFG
+INFO: [Opt 31-194] Inserted BUFG pll/dac_clk_2x_BUFG_inst to drive 1 load(s) on clock net pll/dac_clk_2x_BUFG
+INFO: [Opt 31-193] Inserted 3 BUFG(s) on clock nets
+Phase 4 BUFG optimization | Checksum: 209f9587c
+
+Time (s): cpu = 00:00:00.17 ; elapsed = 00:00:00.13 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+INFO: [Opt 31-662] Phase BUFG optimization created 3 cells of which 3 are BUFGs and removed 1 cells.
+
+Phase 5 Shift Register Optimization
+INFO: [Opt 31-1064] SRL Remap converted 0 SRLs to 0 registers and converted 0 registers of register chains to 0 SRLs
+Phase 5 Shift Register Optimization | Checksum: 209f9587c
+
+Time (s): cpu = 00:00:00.18 ; elapsed = 00:00:00.14 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+INFO: [Opt 31-389] Phase Shift Register Optimization created 0 cells and removed 0 cells
+
+Phase 6 Post Processing Netlist
+Phase 6 Post Processing Netlist | Checksum: 18d29c8de
+
+Time (s): cpu = 00:00:00.18 ; elapsed = 00:00:00.14 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+INFO: [Opt 31-389] Phase Post Processing Netlist created 0 cells and removed 0 cells
+Opt_design Change Summary
+=========================
+
+
+-------------------------------------------------------------------------------------------------------------------------
+|  Phase                        |  #Cells created  |  #Cells Removed  |  #Constrained objects preventing optimizations  |
+-------------------------------------------------------------------------------------------------------------------------
+|  Retarget                     |               2  |              28  |                                              1  |
+|  Constant propagation         |               0  |               8  |                                              0  |
+|  Sweep                        |               1  |             279  |                                              0  |
+|  BUFG optimization            |               3  |               1  |                                              0  |
+|  Shift Register Optimization  |               0  |               0  |                                              0  |
+|  Post Processing Netlist      |               0  |               0  |                                              0  |
+-------------------------------------------------------------------------------------------------------------------------
+
+
+
+Starting Connectivity Check Task
+
+Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+Ending Logic Optimization Task | Checksum: 1b29ce6f2
+
+Time (s): cpu = 00:00:00.24 ; elapsed = 00:00:00.17 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+
+Starting Power Optimization Task
+INFO: [Pwropt 34-132] Skipping clock gating for clocks with a period < 2.00 ns.
+Ending Power Optimization Task | Checksum: 1b29ce6f2
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00.01 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+
+Starting Final Cleanup Task
+Ending Final Cleanup Task | Checksum: 1b29ce6f2
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+
+Starting Netlist Obfuscation Task
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+Ending Netlist Obfuscation Task | Checksum: 1b29ce6f2
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 2622.223 ; gain = 0.000 ; free physical = 102940 ; free virtual = 120659
+INFO: [Common 17-83] Releasing license: Implementation
+35 Infos, 0 Warnings, 0 Critical Warnings and 0 Errors encountered.
+opt_design completed successfully
+INFO: [Timing 38-480] Writing timing data to binary archive.
+Writing placer database...
+Writing XDEF routing.
+Writing XDEF routing logical nets.
+Writing XDEF routing special nets.
+Write XDEF Complete: Time (s): cpu = 00:00:00.04 ; elapsed = 00:00:00.01 . Memory (MB): peak = 2662.242 ; gain = 0.000 ; free physical = 102938 ; free virtual = 120659
+INFO: [Common 17-1381] The checkpoint '/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1/red_pitaya_top_opt.dcp' has been generated.
+INFO: [runtcl-4] Executing : report_drc -file red_pitaya_top_drc_opted.rpt -pb red_pitaya_top_drc_opted.pb -rpx red_pitaya_top_drc_opted.rpx
+Command: report_drc -file red_pitaya_top_drc_opted.rpt -pb red_pitaya_top_drc_opted.pb -rpx red_pitaya_top_drc_opted.rpx
+INFO: [IP_Flow 19-1839] IP Catalog is up to date.
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Coretcl 2-168] The results of DRC are in file /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1/red_pitaya_top_drc_opted.rpt.
+report_drc completed successfully
+Command: place_design
+Attempting to get a license for feature 'Implementation' and/or device 'xc7z010'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xc7z010'
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Vivado_Tcl 4-198] DRC finished with 0 Errors
+INFO: [Vivado_Tcl 4-199] Please refer to the DRC report (report_drc) for more information.
+Running DRC as a precondition to command place_design
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Vivado_Tcl 4-198] DRC finished with 0 Errors
+INFO: [Vivado_Tcl 4-199] Please refer to the DRC report (report_drc) for more information.
+
+Starting Placer Task
+INFO: [Place 30-611] Multithreading enabled for place_design using a maximum of 8 CPUs
+
+Phase 1 Placer Initialization
+
+Phase 1.1 Placer Initialization Netlist Sorting
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102903 ; free virtual = 120624
+Phase 1.1 Placer Initialization Netlist Sorting | Checksum: 1988c6618
+
+Time (s): cpu = 00:00:00 ; elapsed = 00:00:00.01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102903 ; free virtual = 120624
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102903 ; free virtual = 120624
+
+Phase 1.2 IO Placement/ Clock Placement/ Build Placer Device
+CRITICAL WARNING: [Place 30-722] Terminal 'dac_pwm_o[0]' has IOB constraint set to TRUE, but it is either not connected to a FLOP element or the connected FLOP element could not be brought into the I/O
+CRITICAL WARNING: [Place 30-722] Terminal 'dac_pwm_o[1]' has IOB constraint set to TRUE, but it is either not connected to a FLOP element or the connected FLOP element could not be brought into the I/O
+CRITICAL WARNING: [Place 30-722] Terminal 'dac_pwm_o[2]' has IOB constraint set to TRUE, but it is either not connected to a FLOP element or the connected FLOP element could not be brought into the I/O
+CRITICAL WARNING: [Place 30-722] Terminal 'dac_pwm_o[3]' has IOB constraint set to TRUE, but it is either not connected to a FLOP element or the connected FLOP element could not be brought into the I/O
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+Phase 1.2 IO Placement/ Clock Placement/ Build Placer Device | Checksum: e55dcc03
+
+Time (s): cpu = 00:00:00.38 ; elapsed = 00:00:00.21 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102896 ; free virtual = 120617
+
+Phase 1.3 Build Placer Netlist Model
+Phase 1.3 Build Placer Netlist Model | Checksum: 219c5e911
+
+Time (s): cpu = 00:00:00.60 ; elapsed = 00:00:00.29 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102895 ; free virtual = 120616
+
+Phase 1.4 Constrain Clocks/Macros
+Phase 1.4 Constrain Clocks/Macros | Checksum: 219c5e911
+
+Time (s): cpu = 00:00:00.60 ; elapsed = 00:00:00.29 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102895 ; free virtual = 120616
+Phase 1 Placer Initialization | Checksum: 219c5e911
+
+Time (s): cpu = 00:00:00.60 ; elapsed = 00:00:00.29 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102895 ; free virtual = 120616
+
+Phase 2 Global Placement
+
+Phase 2.1 Floorplanning
+
+Phase 2.1.1 Partition Driven Placement
+
+Phase 2.1.1.1 PBP: Partition Driven Placement
+Phase 2.1.1.1 PBP: Partition Driven Placement | Checksum: 265ffc09e
+
+Time (s): cpu = 00:00:00.93 ; elapsed = 00:00:00.38 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102945 ; free virtual = 120666
+
+Phase 2.1.1.2 PBP: Clock Region Placement
+Phase 2.1.1.2 PBP: Clock Region Placement | Checksum: 265ffc09e
+
+Time (s): cpu = 00:00:00.93 ; elapsed = 00:00:00.38 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102945 ; free virtual = 120666
+
+Phase 2.1.1.3 PBP: Compute Congestion
+Phase 2.1.1.3 PBP: Compute Congestion | Checksum: 265ffc09e
+
+Time (s): cpu = 00:00:00.94 ; elapsed = 00:00:00.38 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102943 ; free virtual = 120664
+
+Phase 2.1.1.4 PBP: UpdateTiming
+Phase 2.1.1.4 PBP: UpdateTiming | Checksum: 23b5307ea
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.40 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102943 ; free virtual = 120664
+
+Phase 2.1.1.5 PBP: Add part constraints
+Phase 2.1.1.5 PBP: Add part constraints | Checksum: 23b5307ea
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.40 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102943 ; free virtual = 120664
+Phase 2.1.1 Partition Driven Placement | Checksum: 23b5307ea
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.40 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102943 ; free virtual = 120664
+Phase 2.1 Floorplanning | Checksum: 226a77834
+
+Time (s): cpu = 00:00:01 ; elapsed = 00:00:00.40 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 102943 ; free virtual = 120664
+
+Phase 2.2 Global Placement Core
+
+Phase 2.2.1 Physical Synthesis In Placer
+INFO: [Physopt 32-1035] Found 0 LUTNM shape to break, 23 LUT instances to create LUTNM shape
+INFO: [Physopt 32-1044] Break lutnm for timing: one critical 0, two critical 0, total 0, new lutff created 0
+INFO: [Physopt 32-775] End 1 Pass. Optimized 11 nets or cells. Created 0 new cell, deleted 11 existing cells and moved 0 existing cell
+INFO: [Physopt 32-65] No nets found for high-fanout optimization.
+INFO: [Physopt 32-232] Optimized 0 net. Created 0 new instance.
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-456] No candidate cells for DSP register optimization found in the design.
+INFO: [Physopt 32-775] End 2 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-1123] No candidate cells found for Shift Register to Pipeline optimization
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-677] No candidate cells for Shift Register optimization found in the design
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-526] No candidate cells for BRAM register optimization found in the design
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-846] No candidate cells for URAM register optimization found in the design
+INFO: [Physopt 32-775] End 2 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+INFO: [Physopt 32-949] No candidate nets found for HD net replication
+INFO: [Physopt 32-775] End 1 Pass. Optimized 0 net or cell. Created 0 new cell, deleted 0 existing cell and moved 0 existing cell
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103329 ; free virtual = 121050
+
+Summary of Physical Synthesis Optimizations
+============================================
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+|  Optimization                                     |  Added Cells  |  Removed Cells  |  Optimized Cells/Nets  |  Dont Touch  |  Iterations  |  Elapsed   |
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+|  LUT Combining                                    |            0  |             11  |                    11  |           0  |           1  |  00:00:00  |
+|  Very High Fanout                                 |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  DSP Register                                     |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  Shift Register to Pipeline                       |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  Shift Register                                   |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  BRAM Register                                    |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  URAM Register                                    |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  Dynamic/Static Region Interface Net Replication  |            0  |              0  |                     0  |           0  |           1  |  00:00:00  |
+|  Total                                            |            0  |             11  |                    11  |           0  |           8  |  00:00:00  |
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Phase 2.2.1 Physical Synthesis In Placer | Checksum: 1e1e5495a
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:00.93 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103329 ; free virtual = 121050
+Phase 2.2 Global Placement Core | Checksum: 1b369a2a6
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:00.95 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103333 ; free virtual = 121055
+Phase 2 Global Placement | Checksum: 1b369a2a6
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:00.95 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103333 ; free virtual = 121055
+
+Phase 3 Detail Placement
+
+Phase 3.1 Commit Multi Column Macros
+Phase 3.1 Commit Multi Column Macros | Checksum: 1d03d6c65
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:00.97 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103334 ; free virtual = 121055
+
+Phase 3.2 Commit Most Macros & LUTRAMs
+Phase 3.2 Commit Most Macros & LUTRAMs | Checksum: 18c95cc06
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103335 ; free virtual = 121056
+
+Phase 3.3 Area Swap Optimization
+Phase 3.3 Area Swap Optimization | Checksum: 13f56fc80
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103335 ; free virtual = 121056
+
+Phase 3.4 Pipeline Register Optimization
+Phase 3.4 Pipeline Register Optimization | Checksum: 169ebd754
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103335 ; free virtual = 121056
+
+Phase 3.5 Fast Optimization
+Phase 3.5 Fast Optimization | Checksum: 1920d25c2
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103343 ; free virtual = 121064
+
+Phase 3.6 Small Shape Detail Placement
+Phase 3.6 Small Shape Detail Placement | Checksum: 28b5138a2
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103344 ; free virtual = 121066
+
+Phase 3.7 Re-assign LUT pins
+Phase 3.7 Re-assign LUT pins | Checksum: 23eacd3b7
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103344 ; free virtual = 121066
+
+Phase 3.8 Pipeline Register Optimization
+Phase 3.8 Pipeline Register Optimization | Checksum: 14db9aafe
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103344 ; free virtual = 121066
+
+Phase 3.9 Fast Optimization
+Phase 3.9 Fast Optimization | Checksum: 1916296d6
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103344 ; free virtual = 121065
+Phase 3 Detail Placement | Checksum: 1916296d6
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103344 ; free virtual = 121065
+
+Phase 4 Post Placement Optimization and Clean-Up
+
+Phase 4.1 Post Commit Optimization
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+
+Phase 4.1.1 Post Placement Optimization
+Post Placement Optimization Initialization | Checksum: 15a9f6fe3
+
+Phase 4.1.1.1 BUFG Insertion
+
+Starting Physical Synthesis Task
+
+Phase 1 Physical Synthesis Initialization
+INFO: [Physopt 32-721] Multithreading enabled for phys_opt_design using a maximum of 8 CPUs
+INFO: [Physopt 32-619] Estimated Timing Summary | WNS=-0.860 | TNS=-13.615 |
+Phase 1 Physical Synthesis Initialization | Checksum: 1724782b0
+
+Time (s): cpu = 00:00:00.04 ; elapsed = 00:00:00.01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103326 ; free virtual = 121047
+INFO: [Place 46-56] BUFG insertion identified 0 candidate nets. Inserted BUFG: 0, Replicated BUFG Driver: 0, Skipped due to Placement/Routing Conflicts: 0, Skipped due to Timing Degradation: 0, Skipped due to Illegal Netlist: 0.
+Ending Physical Synthesis Task | Checksum: d4476d6a
+
+Time (s): cpu = 00:00:00.04 ; elapsed = 00:00:00.01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103324 ; free virtual = 121045
+Phase 4.1.1.1 BUFG Insertion | Checksum: 15a9f6fe3
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:01 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103322 ; free virtual = 121043
+INFO: [Place 30-746] Post Placement Timing Summary WNS=0.176. For the most accurate timing information please run report_timing.
+Phase 4.1.1 Post Placement Optimization | Checksum: 1081ec552
+
+Time (s): cpu = 00:00:06 ; elapsed = 00:00:03 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103313 ; free virtual = 121034
+Phase 4.1 Post Commit Optimization | Checksum: 1081ec552
+
+Time (s): cpu = 00:00:06 ; elapsed = 00:00:03 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103313 ; free virtual = 121034
+
+Phase 4.2 Post Placement Cleanup
+Phase 4.2 Post Placement Cleanup | Checksum: 1081ec552
+
+Time (s): cpu = 00:00:06 ; elapsed = 00:00:03 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103313 ; free virtual = 121034
+
+Phase 4.3 Placer Reporting
+Phase 4.3 Placer Reporting | Checksum: 1081ec552
+
+Time (s): cpu = 00:00:06 ; elapsed = 00:00:03 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103313 ; free virtual = 121034
+
+Phase 4.4 Final Placement Cleanup
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103313 ; free virtual = 121034
+Phase 4.4 Final Placement Cleanup | Checksum: db00dfe7
+
+Time (s): cpu = 00:00:06 ; elapsed = 00:00:03 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103313 ; free virtual = 121034
+Phase 4 Post Placement Optimization and Clean-Up | Checksum: db00dfe7
+
+Time (s): cpu = 00:00:06 ; elapsed = 00:00:03 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103313 ; free virtual = 121034
+Ending Placer Task | Checksum: cc00ca02
+
+Time (s): cpu = 00:00:06 ; elapsed = 00:00:03 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103313 ; free virtual = 121034
+INFO: [Common 17-83] Releasing license: Implementation
+74 Infos, 0 Warnings, 4 Critical Warnings and 0 Errors encountered.
+place_design completed successfully
+INFO: [Timing 38-480] Writing timing data to binary archive.
+Writing placer database...
+Writing XDEF routing.
+Writing XDEF routing logical nets.
+Writing XDEF routing special nets.
+Write XDEF Complete: Time (s): cpu = 00:00:00.14 ; elapsed = 00:00:00.03 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103310 ; free virtual = 121035
+INFO: [Common 17-1381] The checkpoint '/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1/red_pitaya_top_placed.dcp' has been generated.
+INFO: [runtcl-4] Executing : report_io -file red_pitaya_top_io_placed.rpt
+report_io: Time (s): cpu = 00:00:00.05 ; elapsed = 00:00:00.07 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103293 ; free virtual = 121016
+INFO: [runtcl-4] Executing : report_utilization -file red_pitaya_top_utilization_placed.rpt -pb red_pitaya_top_utilization_placed.pb
+INFO: [runtcl-4] Executing : report_control_sets -verbose -file red_pitaya_top_control_sets_placed.rpt
+report_control_sets: Time (s): cpu = 00:00:00.01 ; elapsed = 00:00:00.04 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103296 ; free virtual = 121019
+Command: phys_opt_design
+Attempting to get a license for feature 'Implementation' and/or device 'xc7z010'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xc7z010'
+INFO: [Vivado_Tcl 4-383] Design worst setup slack (WNS) is greater than or equal to 0.000 ns. Skipping all physical synthesis optimizations.
+INFO: [Vivado_Tcl 4-232] No setup violation found. The netlist was not modified.
+INFO: [Common 17-83] Releasing license: Implementation
+83 Infos, 0 Warnings, 4 Critical Warnings and 0 Errors encountered.
+phys_opt_design completed successfully
+INFO: [Timing 38-480] Writing timing data to binary archive.
+Writing placer database...
+Writing XDEF routing.
+Writing XDEF routing logical nets.
+Writing XDEF routing special nets.
+Write XDEF Complete: Time (s): cpu = 00:00:00.14 ; elapsed = 00:00:00.04 . Memory (MB): peak = 2768.062 ; gain = 0.000 ; free physical = 103255 ; free virtual = 120981
+INFO: [Common 17-1381] The checkpoint '/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1/red_pitaya_top_physopt.dcp' has been generated.
+Command: route_design
+Attempting to get a license for feature 'Implementation' and/or device 'xc7z010'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xc7z010'
+Running DRC as a precondition to command route_design
+INFO: [DRC 23-27] Running DRC with 8 threads
+WARNING: [DRC PLIO-8] Placement Constraints Check for IO constraints: Terminal dac_pwm_o[0] has IOB constraint set to TRUE, but it is either not connected to a FLOP element or the connected FLOP element could not be brought into the I/O.
+WARNING: [DRC PLIO-8] Placement Constraints Check for IO constraints: Terminal dac_pwm_o[1] has IOB constraint set to TRUE, but it is either not connected to a FLOP element or the connected FLOP element could not be brought into the I/O.
+WARNING: [DRC PLIO-8] Placement Constraints Check for IO constraints: Terminal dac_pwm_o[2] has IOB constraint set to TRUE, but it is either not connected to a FLOP element or the connected FLOP element could not be brought into the I/O.
+WARNING: [DRC PLIO-8] Placement Constraints Check for IO constraints: Terminal dac_pwm_o[3] has IOB constraint set to TRUE, but it is either not connected to a FLOP element or the connected FLOP element could not be brought into the I/O.
+INFO: [Vivado_Tcl 4-198] DRC finished with 0 Errors, 4 Warnings
+INFO: [Vivado_Tcl 4-199] Please refer to the DRC report (report_drc) for more information.
+
+
+Starting Routing Task
+INFO: [Route 35-254] Multithreading enabled for route_design using a maximum of 8 CPUs
+Checksum: PlaceDB: 415030ea ConstDB: 0 ShapeSum: 8ab09918 RouteDB: 0
+
+Phase 1 Build RT Design
+Phase 1 Build RT Design | Checksum: 78339f50
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103179 ; free virtual = 120904
+Post Restoration Checksum: NetGraph: 38312017 NumContArr: 40027f39 Constraints: 0 Timing: 0
+
+Phase 2 Router Initialization
+
+Phase 2.1 Create Timer
+Phase 2.1 Create Timer | Checksum: 78339f50
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103179 ; free virtual = 120904
+
+Phase 2.2 Fix Topology Constraints
+Phase 2.2 Fix Topology Constraints | Checksum: 78339f50
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103156 ; free virtual = 120880
+
+Phase 2.3 Pre Route Cleanup
+Phase 2.3 Pre Route Cleanup | Checksum: 78339f50
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103156 ; free virtual = 120880
+ Number of Nodes with overlaps = 0
+
+Phase 2.4 Update Timing
+Phase 2.4 Update Timing | Checksum: 14b5a493a
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103146 ; free virtual = 120870
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.381  | TNS=0.000  | WHS=-0.288 | THS=-21.666|
+
+Phase 2 Router Initialization | Checksum: 11d374940
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103146 ; free virtual = 120870
+
+Router Utilization Summary
+  Global Vertical Routing Utilization    = 0 %
+  Global Horizontal Routing Utilization  = 0 %
+  Routable Net Status*
+  *Does not include unroutable nets such as driverless and loadless.
+  Run report_route_status for detailed report.
+  Number of Failed Nets               = 1864
+    (Failed Nets is the sum of unrouted and partially routed nets)
+  Number of Unrouted Nets             = 1864
+  Number of Partially Routed Nets     = 0
+  Number of Node Overlaps             = 0
+
+
+Phase 3 Initial Routing
+Phase 3 Initial Routing | Checksum: ba7e84ab
+
+Time (s): cpu = 00:00:03 ; elapsed = 00:00:02 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103147 ; free virtual = 120872
+
+Phase 4 Rip-up And Reroute
+
+Phase 4.1 Global Iteration 0
+ Number of Nodes with overlaps = 162
+ Number of Nodes with overlaps = 26
+ Number of Nodes with overlaps = 16
+ Number of Nodes with overlaps = 5
+ Number of Nodes with overlaps = 1
+ Number of Nodes with overlaps = 0
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.108  | TNS=0.000  | WHS=N/A    | THS=N/A    |
+
+Phase 4.1 Global Iteration 0 | Checksum: 1c8087846
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Phase 4.2 Global Iteration 1
+ Number of Nodes with overlaps = 1
+ Number of Nodes with overlaps = 2
+ Number of Nodes with overlaps = 3
+ Number of Nodes with overlaps = 0
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.108  | TNS=0.000  | WHS=N/A    | THS=N/A    |
+
+Phase 4.2 Global Iteration 1 | Checksum: 12105ab63
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+Phase 4 Rip-up And Reroute | Checksum: 12105ab63
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Phase 5 Delay and Skew Optimization
+
+Phase 5.1 Delay CleanUp
+Phase 5.1 Delay CleanUp | Checksum: 12105ab63
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Phase 5.2 Clock Skew Optimization
+Phase 5.2 Clock Skew Optimization | Checksum: 12105ab63
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+Phase 5 Delay and Skew Optimization | Checksum: 12105ab63
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Phase 6 Post Hold Fix
+
+Phase 6.1 Hold Fix Iter
+
+Phase 6.1.1 Update Timing
+Phase 6.1.1 Update Timing | Checksum: 1d7dabb5c
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.108  | TNS=0.000  | WHS=0.019  | THS=0.000  |
+
+Phase 6.1 Hold Fix Iter | Checksum: 1c2e4767b
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+Phase 6 Post Hold Fix | Checksum: 1c2e4767b
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Phase 7 Route finalize
+
+Router Utilization Summary
+  Global Vertical Routing Utilization    = 0.654561 %
+  Global Horizontal Routing Utilization  = 0.976103 %
+  Routable Net Status*
+  *Does not include unroutable nets such as driverless and loadless.
+  Run report_route_status for detailed report.
+  Number of Failed Nets               = 0
+    (Failed Nets is the sum of unrouted and partially routed nets)
+  Number of Unrouted Nets             = 0
+  Number of Partially Routed Nets     = 0
+  Number of Node Overlaps             = 0
+
+Phase 7 Route finalize | Checksum: 1e69d8875
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Phase 8 Verifying routed nets
+
+ Verification completed successfully
+Phase 8 Verifying routed nets | Checksum: 1e69d8875
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Phase 9 Depositing Routes
+Phase 9 Depositing Routes | Checksum: 2582b00f3
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Phase 10 Post Router Timing
+INFO: [Route 35-57] Estimated Timing Summary | WNS=0.108  | TNS=0.000  | WHS=0.019  | THS=0.000  |
+
+INFO: [Route 35-327] The final timing numbers are based on the router estimated timing analysis. For a complete and accurate timing signoff, please run report_timing_summary.
+Phase 10 Post Router Timing | Checksum: 2582b00f3
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+INFO: [Route 35-16] Router Completed Successfully
+
+Time (s): cpu = 00:00:04 ; elapsed = 00:00:03 . Memory (MB): peak = 2845.070 ; gain = 16.008 ; free physical = 103145 ; free virtual = 120869
+
+Routing Is Done.
+INFO: [Common 17-83] Releasing license: Implementation
+98 Infos, 4 Warnings, 4 Critical Warnings and 0 Errors encountered.
+route_design completed successfully
+INFO: [Timing 38-480] Writing timing data to binary archive.
+Writing placer database...
+Writing XDEF routing.
+Writing XDEF routing logical nets.
+Writing XDEF routing special nets.
+Write XDEF Complete: Time (s): cpu = 00:00:00.17 ; elapsed = 00:00:00.04 . Memory (MB): peak = 2845.070 ; gain = 0.000 ; free physical = 103137 ; free virtual = 120866
+INFO: [Common 17-1381] The checkpoint '/home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1/red_pitaya_top_routed.dcp' has been generated.
+INFO: [runtcl-4] Executing : report_drc -file red_pitaya_top_drc_routed.rpt -pb red_pitaya_top_drc_routed.pb -rpx red_pitaya_top_drc_routed.rpx
+Command: report_drc -file red_pitaya_top_drc_routed.rpt -pb red_pitaya_top_drc_routed.pb -rpx red_pitaya_top_drc_routed.rpx
+INFO: [IP_Flow 19-1839] IP Catalog is up to date.
+INFO: [DRC 23-27] Running DRC with 8 threads
+INFO: [Coretcl 2-168] The results of DRC are in file /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1/red_pitaya_top_drc_routed.rpt.
+report_drc completed successfully
+INFO: [runtcl-4] Executing : report_methodology -file red_pitaya_top_methodology_drc_routed.rpt -pb red_pitaya_top_methodology_drc_routed.pb -rpx red_pitaya_top_methodology_drc_routed.rpx
+Command: report_methodology -file red_pitaya_top_methodology_drc_routed.rpt -pb red_pitaya_top_methodology_drc_routed.pb -rpx red_pitaya_top_methodology_drc_routed.rpx
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+INFO: [DRC 23-133] Running Methodology with 8 threads
+INFO: [Coretcl 2-1520] The results of Report Methodology are in file /home/mdovale/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1/red_pitaya_top_methodology_drc_routed.rpt.
+report_methodology completed successfully
+INFO: [runtcl-4] Executing : report_power -file red_pitaya_top_power_routed.rpt -pb red_pitaya_top_power_summary_routed.pb -rpx red_pitaya_top_power_routed.rpx
+Command: report_power -file red_pitaya_top_power_routed.rpt -pb red_pitaya_top_power_summary_routed.pb -rpx red_pitaya_top_power_routed.rpx
+INFO: [Timing 38-35] Done setting XDC timing constraints.
+Running Vector-less Activity Propagation...
+
+Finished Running Vector-less Activity Propagation
+WARNING: [Power 33-332] Found switching activity that implies high-fanout reset nets being asserted for excessive periods of time which may result in inaccurate power analysis.
+Resolution: To review and fix problems, please run Power Constraints Advisor in the GUI from Tools > Power Constraints Advisor or run report_power with the -advisory option to generate a text report.
+110 Infos, 5 Warnings, 4 Critical Warnings and 0 Errors encountered.
+report_power completed successfully
+INFO: [runtcl-4] Executing : report_route_status -file red_pitaya_top_route_status.rpt -pb red_pitaya_top_route_status.pb
+INFO: [runtcl-4] Executing : report_timing_summary -max_paths 10 -file red_pitaya_top_timing_summary_routed.rpt -pb red_pitaya_top_timing_summary_routed.pb -rpx red_pitaya_top_timing_summary_routed.rpx -warn_on_violation 
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -1, Delay Type: min_max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+INFO: [runtcl-4] Executing : report_incremental_reuse -file red_pitaya_top_incremental_reuse_routed.rpt
+INFO: [Vivado_Tcl 4-1062] Incremental flow is disabled. No incremental reuse Info to report.
+INFO: [runtcl-4] Executing : report_clock_utilization -file red_pitaya_top_clock_utilization_routed.rpt
+INFO: [runtcl-4] Executing : report_bus_skew -warn_on_violation -file red_pitaya_top_bus_skew_routed.rpt -pb red_pitaya_top_bus_skew_routed.pb -rpx red_pitaya_top_bus_skew_routed.rpx
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -1, Delay Type: min_max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 8 CPUs
+Command: write_bitstream -force red_pitaya_top.bit
+Attempting to get a license for feature 'Implementation' and/or device 'xc7z010'
+INFO: [Common 17-349] Got license for feature 'Implementation' and/or device 'xc7z010'
+Running DRC as a precondition to command write_bitstream
+INFO: [IP_Flow 19-1839] IP Catalog is up to date.
+INFO: [DRC 23-27] Running DRC with 8 threads
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[0].iobuf_exp_n/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[0].iobuf_exp_p/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[1].iobuf_exp_n/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[2].iobuf_exp_n/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[3].iobuf_exp_n/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[3].iobuf_exp_p/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[4].iobuf_exp_n/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[4].iobuf_exp_p/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[5].iobuf_exp_n/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[5].iobuf_exp_p/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[6].iobuf_exp_n/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[6].iobuf_exp_p/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[7].iobuf_exp_n/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+WARNING: [DRC BUFC-1] Input Buffer Connections: Input buffer gen_exp_iobuf[7].iobuf_exp_p/IBUF has no loads. It is recommended to have an input buffer drive an internal load.
+INFO: [Vivado 12-3199] DRC finished with 0 Errors, 14 Warnings
+INFO: [Vivado 12-3200] Please refer to the DRC report (report_drc) for more information.
+INFO: [Designutils 20-2272] Running write_bitstream with 8 threads.
+Loading data files...
+Loading site data...
+Loading route data...
+Processing options...
+Creating bitmap...
+Creating bitstream...
+Writing bitstream ./red_pitaya_top.bit...
+INFO: [Vivado 12-1842] Bitgen Completed Successfully.
+INFO: [Project 1-120] WebTalk data collection is mandatory when using a WebPACK part without a full Vivado license. To see the specific WebTalk data collected for your design, open the usage_statistics_webtalk.html or usage_statistics_webtalk.xml file in the implementation directory.
+INFO: [Common 17-83] Releasing license: Implementation
+129 Infos, 19 Warnings, 4 Critical Warnings and 0 Errors encountered.
+write_bitstream completed successfully
+write_bitstream: Time (s): cpu = 00:00:04 ; elapsed = 00:00:07 . Memory (MB): peak = 3157.809 ; gain = 195.371 ; free physical = 102975 ; free virtual = 120705
+INFO: [Common 17-206] Exiting Vivado at Wed Apr  8 11:15:37 2026...
+[Wed Apr  8 11:15:43 2026] impl_1 finished
+wait_on_run: Time (s): cpu = 00:00:52 ; elapsed = 00:01:20 . Memory (MB): peak = 2245.258 ; gain = 0.000 ; free physical = 104260 ; free virtual = 121989
+INFO: [Common 17-206] Exiting Vivado at Wed Apr  8 11:15:43 2026...
+Converting .bit to .bit.bin on remote (OS 2.x+)...
+.remote_bootgen_NWI530                                                                                                                                                                                                                     100%  855     1.4MB/s   00:00    
+
+
+****** Xilinx Bootgen v2020.1
+  **** Build date : May 27 2020-20:33:36
+    ** Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.
+
+
+[INFO]   : Bootimage generated successfully
+
+Generated .bit.bin on remote (OS 2.x+ compatible)
+Fetching bitstream from remote...
+FPGA build completed successfully.

@@ -29,11 +29,11 @@ Relevant excerpts from `fpga/source/system_design_bd_rp125_14/system.tcl`:
 - **Clock association:** `PL_ACLK` is associated with `M_AXI_GP0` so Vivado knows the bus timing domain.
 - **Address assignment:** the PL slave is given a **fixed region** in the PS memory map.
 
-Example from the same TCL (values are project-specific; treat `0x40000000` / `4 KiB` as the **contract** between HW and SW):
+Example from the same TCL (values are project-specific; treat `0x42000000` / `4 KiB` as the **contract** between HW and SW):
 
 ```tcl
 # Slave segment visible to the PS "Data" address space:
-assign_bd_address -offset 0x40000000 -range 0x00001000 \
+assign_bd_address -offset 0x42000000 -range 0x00001000 \
   -target_address_space [get_bd_addr_spaces processing_system7/Data] \
   [get_bd_addr_segs M_AXI_GP0/Reg] -force
 ```
@@ -144,7 +144,7 @@ It’s a decent **reference** for:
 - **Write strobes** (`WSTRB`) for byte-wise writes
 - **Read mux** from internal registers and datapath (`RDATA`)
 
-The header documents the **register map** (offsets relative to the AXI base, e.g. `0x40000000`):
+The header documents the **register map** (offsets relative to the AXI base, e.g. `0x42000000`):
 
 | Offset | Name | Access |
 |--------|------|--------|
@@ -189,7 +189,7 @@ If you’re sketching something minimal before folding in acquisition logic, a s
 
 ### 4.1 Physical base address
 
-Per the address map in §2.1, this project’s GP0 segment is at **`0x40000000`** with **`0x1000`** bytes — **confirm** in Vivado’s *Address Editor* on your build; don’t assume it if you’ve changed the BD.
+Per the address map in §2.1, this project’s GP0 segment is at **`0x42000000`** with **`0x1000`** bytes — **confirm** in Vivado’s *Address Editor* on your build; don’t assume it if you’ve changed the BD.
 
 ### 4.2 Example: map and access 32-bit registers
 
@@ -201,7 +201,7 @@ Below is **illustrative** C code. You need **root** or a **UIO driver**; raw `/d
 #include <sys/mman.h>
 #include <unistd.h>
 
-#define GP0_BASE   0x40000000u
+#define GP0_BASE   0x42000000u
 #define GP0_SIZE   0x1000u
 
 #define OFF_CH1    0x00u

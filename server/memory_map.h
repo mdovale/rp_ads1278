@@ -8,7 +8,7 @@
 #include "protocol.h"
 
 #define ADS1278_MMIO_DEFAULT_PATH "/dev/mem"
-#define ADS1278_MMIO_BASE 0x40000000u
+#define ADS1278_MMIO_BASE 0x42000000u
 #define ADS1278_MMIO_SIZE 0x1000u
 #define ADS1278_SNAPSHOT_RETRY_LIMIT 3u
 

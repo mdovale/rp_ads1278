@@ -94,7 +94,7 @@ Useful current checks for this feature area:
 - Confirm both `ads1278.bit` and `ads1278.bit.bin` exist after a successful build.
 - Confirm `./fpga-deploy.sh --target rp125_14 --ip <host>` can copy and program the `.bit.bin`.
 - After deployment, confirm FPGA Manager reports `operating`.
-- If `devmem` is available on the board, confirm reads at `0x40000000` succeed after programming.
+- If `devmem` is available on the board, confirm reads at `0x42000000` succeed after programming.
 
 ## Key files
 

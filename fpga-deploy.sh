@@ -23,6 +23,7 @@ FPGAUTIL_PATH="/opt/redpitaya/bin/fpgautil"
 REMOTE_DIR="/root"
 VERIFY_TIMEOUT_S="${VERIFY_TIMEOUT_S:-3}"
 REMOTE_HAS_TIMEOUT=""
+ADS1278_MMIO_BASE="${ADS1278_MMIO_BASE:-0x42000000}"
 
 usage() {
   cat <<EOF
@@ -274,7 +275,7 @@ verify_fpga_state() {
       echo -e "${YELLOW}Note: remote 'timeout' command not available; skipping optional firmware-name probe to avoid hangs.${NC}" >&2
     fi
   fi
-  addr="0x40000000"
+  addr="$ADS1278_MMIO_BASE"
   if ssh $SSH_OPTS "$TARGET_USER@$REDPITAYA_IP" "command -v devmem >/dev/null 2>&1"; then
     if run_remote_timed "devmem $addr 32 2>/dev/null" >/dev/null 2>&1; then
       echo -e "${GREEN}Verified: FPGA responds at design address $addr (functional read OK).${NC}"
