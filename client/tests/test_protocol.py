@@ -9,6 +9,7 @@ from ads1278_client.protocol import (
     MessageStreamBuffer,
     MIN_EXTCLK_DIV,
     build_message,
+    pack_mark_capture,
     pack_set_enable,
     pack_set_extclk_div,
     pack_trigger_sync,
@@ -109,6 +110,10 @@ def test_command_packers_match_server_layout() -> None:
     sync_opcode, sync_value = struct.unpack("<II", pack_trigger_sync())
     assert sync_opcode == CommandOpcode.TRIGGER_SYNC
     assert sync_value == 0
+
+    capture_opcode, capture_value = struct.unpack("<II", pack_mark_capture())
+    assert capture_opcode == CommandOpcode.MARK_CAPTURE
+    assert capture_value == 0
 
     div_opcode, div_value = struct.unpack("<II", pack_set_extclk_div(625))
     assert div_opcode == CommandOpcode.SET_EXTCLK_DIV

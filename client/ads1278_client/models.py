@@ -9,6 +9,7 @@ class CommandOpcode(IntEnum):
     SET_ENABLE = 1
     TRIGGER_SYNC = 2
     SET_EXTCLK_DIV = 3
+    MARK_CAPTURE = 4
 
 
 class MessageType(IntEnum):

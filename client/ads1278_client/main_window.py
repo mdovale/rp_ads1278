@@ -222,7 +222,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.enabled_label.setText(f"enabled: {'yes' if latest.enabled else 'no'}")
             self.overflow_label.setText(f"overflow: {'yes' if latest.overflow else 'no'}")
             self.divider_label.setText(f"divider: {latest.extclk_div}")
-            self.divider_input.setValue(latest.extclk_div)
+            if snapshot.connected and not self.divider_input.hasFocus():
+                self.divider_input.setValue(latest.extclk_div)
 
         self.capability_label.setText(
             f"capability: {snapshot.capability_line or '-'}"

@@ -29,3 +29,6 @@ client/.coverage
 client/*.egg-info/
 client/**/__pycache__/
 client/**/*.py[cod]
+
+*.pdf
+*.csv

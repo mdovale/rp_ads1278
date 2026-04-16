@@ -89,6 +89,10 @@ class FakeAds1278Server:
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))
                 continue
 
+            if opcode == CommandOpcode.MARK_CAPTURE:
+                conn.sendall(self.make_message(MessageType.ACK, opcode, value))
+                continue
+
             if opcode == CommandOpcode.SET_EXTCLK_DIV and value >= 3:
                 self.extclk_div = value
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))

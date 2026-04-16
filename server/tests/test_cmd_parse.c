@@ -74,11 +74,21 @@ static void test_invalid_divider_rejection(void)
     assert(ads1278_command_validate(&command) == ADS1278_CMD_ERR_INVALID_EXTCLK_DIV);
 }
 
+static void test_mark_capture_acceptance(void)
+{
+    ads1278_command command;
+
+    command.opcode = ADS1278_OPCODE_MARK_CAPTURE;
+    command.value = 0u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+}
+
 int main(void)
 {
     test_partial_reads();
     test_multiple_commands_in_one_buffer();
     test_invalid_opcode_rejection();
     test_invalid_divider_rejection();
+    test_mark_capture_acceptance();
     return 0;
 }

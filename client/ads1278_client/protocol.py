@@ -81,6 +81,10 @@ def pack_trigger_sync() -> bytes:
     return pack_command(CommandOpcode.TRIGGER_SYNC, 0)
 
 
+def pack_mark_capture() -> bytes:
+    return pack_command(CommandOpcode.MARK_CAPTURE, 0)
+
+
 def pack_set_extclk_div(divider: int) -> bytes:
     if divider < MIN_EXTCLK_DIV:
         raise ValueError(f"EXTCLK divider must be >= {MIN_EXTCLK_DIV}")

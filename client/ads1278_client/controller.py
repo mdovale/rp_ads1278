@@ -9,10 +9,11 @@ from typing import Deque, List, Optional, Sequence
 import numpy as np
 
 from .csv_logger import SampleCsvLogger
-from .models import Ads1278Message, MessageType
+from .models import Ads1278Message, CommandOpcode, MessageType
 from .protocol import (
     CHANNEL_COUNT,
     SERVER_PORT,
+    pack_mark_capture,
     pack_set_enable,
     pack_set_extclk_div,
     pack_trigger_sync,
@@ -48,6 +49,7 @@ class ClientController:
         self._status_text = "Disconnected"
         self._status_level = "info"
         self._logging_path = ""
+        self._pending_logging_paths: Deque[Optional[str]] = deque()
         self._logger: Optional[SampleCsvLogger] = None
         self._transport = TransportClient(
             on_message=self._handle_message,
@@ -86,15 +88,27 @@ class ClientController:
         self._transport.send_command(pack_set_extclk_div(divider))
 
     def start_logging(self, path: str | Path) -> None:
+        logging_path = str(Path(path))
         with self._lock:
+            if not self._connected:
+                raise RuntimeError("must be connected before starting CSV capture")
+            self._cancel_pending_logging_locked()
             self._close_logger_locked()
-            self._logger = SampleCsvLogger(path)
-            self._logging_path = str(Path(path))
-            self._status_text = f"Logging samples to {self._logging_path}"
+            self._logging_path = logging_path
+            self._pending_logging_paths.append(logging_path)
+            self._status_text = f"Arming CSV capture for {self._logging_path}"
             self._status_level = "info"
+        try:
+            self._transport.send_command(pack_mark_capture())
+        except Exception:
+            with self._lock:
+                self._cancel_pending_logging_locked()
+                self._close_logger_locked()
+            raise
 
     def stop_logging(self) -> None:
         with self._lock:
+            self._cancel_pending_logging_locked()
             self._close_logger_locked()
             self._status_text = "CSV logging stopped"
             self._status_level = "info"
@@ -125,6 +139,8 @@ class ClientController:
         with self._lock:
             self._connected = False
             self._capability_line = ""
+            self._latest_message = None
+            self._cancel_pending_logging_locked()
             self._close_logger_locked()
             self._status_text = f"Disconnected: {reason}"
             self._status_level = "error" if reason and reason != "disconnected" else "info"
@@ -149,6 +165,9 @@ class ClientController:
                 return
 
             if message.message_type is MessageType.ACK:
+                if message.command_opcode is CommandOpcode.MARK_CAPTURE:
+                    self._activate_logger_locked(self._pop_pending_logging_path_locked())
+                    return
                 self._status_text = (
                     f"ACK {message.opcode_label} value={message.value} seq={message.msg_seq}"
                 )
@@ -156,6 +175,14 @@ class ClientController:
                 return
 
             if message.message_type is MessageType.ERROR:
+                if message.command_opcode is CommandOpcode.MARK_CAPTURE:
+                    if self._pop_pending_logging_path_locked() is not None:
+                        self._logging_path = ""
+                    self._status_text = (
+                        f"ERROR {message.opcode_label} value={message.value} seq={message.msg_seq}"
+                    )
+                    self._status_level = "error"
+                    return
                 self._status_text = (
                     f"ERROR {message.opcode_label} value={message.value} seq={message.msg_seq}"
                 )
@@ -164,6 +191,32 @@ class ClientController:
 
             self._status_text = f"Unknown message type {message.msg_type}"
             self._status_level = "error"
+
+    def _activate_logger_locked(self, logging_path: Optional[str]) -> None:
+        if not logging_path:
+            self._status_text = "Capture marker acknowledged"
+            self._status_level = "ok"
+            return
+        try:
+            self._logger = SampleCsvLogger(logging_path)
+        except Exception as exc:
+            self._close_logger_locked()
+            self._status_text = f"Failed to start CSV logging: {exc}"
+            self._status_level = "error"
+            return
+        self._logging_path = logging_path
+        self._status_text = f"Logging samples to {self._logging_path}"
+        self._status_level = "ok"
+
+    def _cancel_pending_logging_locked(self) -> None:
+        self._pending_logging_paths = deque(
+            None for _ in self._pending_logging_paths
+        )
+
+    def _pop_pending_logging_path_locked(self) -> Optional[str]:
+        if not self._pending_logging_paths:
+            return None
+        return self._pending_logging_paths.popleft()
 
     def _close_logger_locked(self) -> None:
         if self._logger is not None:

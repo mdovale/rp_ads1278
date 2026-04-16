@@ -335,6 +335,9 @@ static void ads1278_apply_command(
     case ADS1278_OPCODE_SET_EXTCLK_DIV:
         ads1278_mmio_write32(&state->mmio, ADS1278_REG_EXTCLK_DIV, command->value);
         break;
+    case ADS1278_OPCODE_MARK_CAPTURE:
+        /* ACK establishes an ordered capture boundary on the TCP stream. */
+        break;
     default:
         break;
     }

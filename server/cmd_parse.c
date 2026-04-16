@@ -59,6 +59,7 @@ ads1278_cmd_validation_result ads1278_command_validate(const ads1278_command *co
         }
         return ADS1278_CMD_ERR_INVALID_ENABLE_VALUE;
     case ADS1278_OPCODE_TRIGGER_SYNC:
+    case ADS1278_OPCODE_MARK_CAPTURE:
         return ADS1278_CMD_VALID;
     case ADS1278_OPCODE_SET_EXTCLK_DIV:
         if (command->value >= 3u) {
