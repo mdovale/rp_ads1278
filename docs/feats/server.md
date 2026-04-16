@@ -29,7 +29,7 @@ Current runtime behavior is:
 - The process maps `0x42000000` for `0x1000` bytes through `/dev/mem`.
 - The listener accepts one TCP client at a time on port `5000`.
 - On connect, the server sends `RP_CAP:ads1278_v1\n`, then one initial `SAMPLE` message built from the latest coherent snapshot.
-- While a client is connected, the server polls MMIO and emits a new `SAMPLE` only when `frame_cnt` changes.
+- While a client is connected, the server schedules MMIO checks from the current `EXTCLK_DIV` so the wake cadence targets about `2 * f_data`, capped by the configured `--poll-ms` maximum wait, and emits a new `SAMPLE` only when `frame_cnt` changes.
 - Valid commands are applied immediately and answered with an `ACK`.
 - Invalid commands are answered with an `ERROR`.
 - `ACK` and `ERROR` messages still include the latest coherent snapshot so the client does not need a second read path.
@@ -62,7 +62,7 @@ The snapshot flow matches the current RTL contract:
 
 ## Known risk areas
 
-- The server polls in user space, so it is not a final throughput architecture.
+- The server still polls in user space, so it is not a final throughput architecture even though the wake cadence now follows `EXTCLK_DIV`.
 - `new_data` is pulse-style and is not used as the primary emission trigger.
 - Divider writes affect EXTCLK generation, SPI timing, and SYNC pulse width together because that is the current FPGA contract.
 - The server assumes a little-endian host, which matches the current Red Pitaya target and the documented protocol.

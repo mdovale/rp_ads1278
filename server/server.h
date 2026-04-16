@@ -7,6 +7,7 @@
 #include "memory_map.h"
 
 #define ADS1278_SERVER_LISTEN_BACKLOG 4
+/* Upper bound on client-loop sleep; actual sample checks also follow EXTCLK_DIV. */
 #define ADS1278_SERVER_POLL_TIMEOUT_MS 10
 
 typedef struct {

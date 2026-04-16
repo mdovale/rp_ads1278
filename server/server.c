@@ -6,13 +6,14 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef MSG_NOSIGNAL
@@ -29,6 +30,11 @@ typedef struct {
 } ads1278_server_state;
 
 static volatile sig_atomic_t g_stop_requested = 0;
+
+#define ADS1278_NS_PER_SEC 1000000000ull
+#define ADS1278_NS_PER_MS 1000000ull
+#define ADS1278_NS_PER_US 1000ull
+#define ADS1278_DOUBLE_FDATA_INTERVAL_NS_PER_DIV 4096ull
 
 static void ads1278_handle_stop_signal(int signo)
 {
@@ -126,6 +132,105 @@ static int ads1278_set_nonblocking(int fd)
     }
 
     return 0;
+}
+
+static int ads1278_get_monotonic_time(struct timespec *now)
+{
+    if (now == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    return clock_gettime(CLOCK_MONOTONIC, now);
+}
+
+static uint64_t ads1278_timespec_to_ns(const struct timespec *value)
+{
+    return ((uint64_t)value->tv_sec * ADS1278_NS_PER_SEC) + (uint64_t)value->tv_nsec;
+}
+
+static void ads1278_ns_to_timespec(uint64_t total_ns, struct timespec *value)
+{
+    value->tv_sec = (time_t)(total_ns / ADS1278_NS_PER_SEC);
+    value->tv_nsec = (long)(total_ns % ADS1278_NS_PER_SEC);
+}
+
+static void ads1278_ns_to_timeval(uint64_t total_ns, struct timeval *value)
+{
+    value->tv_sec = (time_t)(total_ns / ADS1278_NS_PER_SEC);
+    value->tv_usec = (suseconds_t)((total_ns % ADS1278_NS_PER_SEC) / ADS1278_NS_PER_US);
+}
+
+static uint64_t ads1278_compute_sample_interval_ns(
+    const ads1278_server_state *state,
+    const ads1278_server_options *options
+)
+{
+    uint32_t extclk_div;
+    uint64_t interval_ns;
+
+    extclk_div = state->snapshot.extclk_div;
+    if (extclk_div == 0u) {
+        extclk_div = 1u;
+    }
+
+    interval_ns = (uint64_t)extclk_div * ADS1278_DOUBLE_FDATA_INTERVAL_NS_PER_DIV;
+    if (options->poll_timeout_ms > 0) {
+        uint64_t max_interval_ns;
+
+        max_interval_ns = (uint64_t)options->poll_timeout_ms * ADS1278_NS_PER_MS;
+        if (max_interval_ns < interval_ns) {
+            interval_ns = max_interval_ns;
+        }
+    }
+
+    return interval_ns;
+}
+
+static int ads1278_set_next_sample_deadline(
+    struct timespec *deadline,
+    const ads1278_server_state *state,
+    const ads1278_server_options *options
+)
+{
+    uint64_t now_ns;
+    struct timespec now;
+
+    if (deadline == NULL || state == NULL || options == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (ads1278_get_monotonic_time(&now) != 0) {
+        return -1;
+    }
+
+    now_ns = ads1278_timespec_to_ns(&now);
+    ads1278_ns_to_timespec(now_ns + ads1278_compute_sample_interval_ns(state, options), deadline);
+    return 0;
+}
+
+static uint64_t ads1278_time_until_deadline_ns(const struct timespec *deadline)
+{
+    uint64_t now_ns;
+    uint64_t deadline_ns;
+    struct timespec now;
+
+    if (deadline == NULL) {
+        return 0u;
+    }
+
+    if (ads1278_get_monotonic_time(&now) != 0) {
+        return 0u;
+    }
+
+    now_ns = ads1278_timespec_to_ns(&now);
+    deadline_ns = ads1278_timespec_to_ns(deadline);
+    if (deadline_ns <= now_ns) {
+        return 0u;
+    }
+
+    return deadline_ns - now_ns;
 }
 
 int ads1278_server_parse_args(int argc, char **argv, ads1278_server_options *options)
@@ -531,12 +636,15 @@ int ads1278_server_run(const ads1278_server_options *options)
     ads1278_server_state state;
     int listener_fd;
     int client_fd;
+    struct timespec next_sample_deadline;
+    bool next_sample_deadline_valid;
 
     memset(&state, 0, sizeof(state));
     state.mmio.fd = -1;
     ads1278_cmd_parser_init(&state.parser);
     listener_fd = -1;
     client_fd = -1;
+    next_sample_deadline_valid = false;
 
     if (ads1278_install_signal_handlers() != 0) {
         perror("sigaction");
@@ -562,34 +670,49 @@ int ads1278_server_run(const ads1278_server_options *options)
     fprintf(stderr, "Listening on port %u using %s\n", (unsigned int)options->port, options->mem_path);
 
     while (g_stop_requested == 0) {
-        struct pollfd poll_fds[2];
-        nfds_t poll_count;
-        int poll_result;
+        fd_set read_fds;
+        int select_result;
+        int max_fd;
+        struct timeval timeout;
+        struct timeval *timeout_ptr;
 
-        memset(poll_fds, 0, sizeof(poll_fds));
-        poll_count = 0u;
+        FD_ZERO(&read_fds);
+        max_fd = -1;
+        timeout_ptr = NULL;
 
         if (client_fd < 0) {
-            poll_fds[poll_count].fd = listener_fd;
-            poll_fds[poll_count].events = POLLIN;
-            poll_count += 1u;
+            FD_SET(listener_fd, &read_fds);
+            max_fd = listener_fd;
         } else {
-            poll_fds[poll_count].fd = client_fd;
-            poll_fds[poll_count].events = POLLIN | POLLERR | POLLHUP;
-            poll_count += 1u;
+            uint64_t timeout_ns;
+
+            FD_SET(client_fd, &read_fds);
+            max_fd = client_fd;
+
+            if (!next_sample_deadline_valid) {
+                if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
+                    perror("clock_gettime");
+                    break;
+                }
+                next_sample_deadline_valid = true;
+            }
+
+            timeout_ns = ads1278_time_until_deadline_ns(&next_sample_deadline);
+            ads1278_ns_to_timeval(timeout_ns, &timeout);
+            timeout_ptr = &timeout;
         }
 
-        poll_result = poll(poll_fds, poll_count, options->poll_timeout_ms);
-        if (poll_result < 0) {
+        select_result = select(max_fd + 1, &read_fds, NULL, NULL, timeout_ptr);
+        if (select_result < 0) {
             if (errno == EINTR) {
                 continue;
             }
-            perror("poll");
+            perror("select");
             break;
         }
 
         if (client_fd < 0) {
-            if (poll_result > 0 && (poll_fds[0].revents & POLLIN) != 0) {
+            if (select_result > 0 && FD_ISSET(listener_fd, &read_fds)) {
                 client_fd = accept(listener_fd, NULL, NULL);
                 if (client_fd < 0) {
                     if (errno == EINTR) {
@@ -606,27 +729,43 @@ int ads1278_server_run(const ads1278_server_options *options)
                 if (ads1278_handle_new_client(client_fd, &state, options->snapshot_retries) != 0) {
                     perror("client setup");
                     ads1278_close_client(&client_fd);
+                } else if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
+                    perror("clock_gettime");
+                    ads1278_close_client(&client_fd);
+                } else {
+                    next_sample_deadline_valid = true;
                 }
             }
             continue;
         }
 
-        if (poll_result > 0) {
-            if ((poll_fds[0].revents & (POLLERR | POLLHUP)) != 0) {
+        if (select_result > 0 && FD_ISSET(client_fd, &read_fds)) {
+            if (ads1278_service_client_socket(client_fd, &state, options->snapshot_retries) != 0) {
                 ads1278_close_client(&client_fd);
+                next_sample_deadline_valid = false;
                 continue;
             }
-            if ((poll_fds[0].revents & POLLIN) != 0) {
-                if (ads1278_service_client_socket(client_fd, &state, options->snapshot_retries) != 0) {
-                    ads1278_close_client(&client_fd);
-                    continue;
-                }
+            if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
+                perror("clock_gettime");
+                ads1278_close_client(&client_fd);
+                next_sample_deadline_valid = false;
+                continue;
             }
+            next_sample_deadline_valid = true;
         }
 
-        if (ads1278_maybe_send_sample(client_fd, &state, options->snapshot_retries) != 0) {
-            ads1278_close_client(&client_fd);
-            continue;
+        if (next_sample_deadline_valid && ads1278_time_until_deadline_ns(&next_sample_deadline) == 0u) {
+            if (ads1278_maybe_send_sample(client_fd, &state, options->snapshot_retries) != 0) {
+                    ads1278_close_client(&client_fd);
+                    next_sample_deadline_valid = false;
+                    continue;
+            }
+            if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
+                perror("clock_gettime");
+                ads1278_close_client(&client_fd);
+                next_sample_deadline_valid = false;
+                continue;
+            }
         }
     }
 

@@ -30,5 +30,6 @@ client/*.egg-info/
 client/**/__pycache__/
 client/**/*.py[cod]
 
+# Misc files
 *.pdf
 *.csv
