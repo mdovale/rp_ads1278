@@ -30,6 +30,9 @@ The current register map is:
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
 | `0x24` | `CTRL` | R/W | Bit `0` = `sync_trigger`, bit `1` = acquisition enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared half-period divider used by the current clocking path |
+| `0x2C` | `FIFO_STATUS` | R | Bits `[15:0]` = FIFO level in frames, bit `16` = empty, bit `17` = full |
+| `0x30` | `FIFO_DROPS` | R | Count of queued DMA frames dropped because the staged FIFO was full |
+| `0x34` | `FIFO_CAPACITY` | R | Configured staged FIFO depth in frames (`64`) |
 
 Current read and write semantics:
 
@@ -38,6 +41,9 @@ Current read and write semantics:
 - Writing `CTRL[1] = 1` enables acquisition and clock generation. Clearing it disables both.
 - Writing `CTRL[0] = 1` triggers a one-shot `SYNC` pulse. The bit auto-clears in hardware on the next bus clock.
 - `EXTCLK_DIV` resets to `625` (`0x271`), which corresponds to a nominal `100 kHz` output from a `125 MHz` input clock using the current divider formula.
+- `FIFO_STATUS` reports staged DMA FIFO occupancy for bring-up and debug without changing the legacy MMIO latest-sample path.
+- `FIFO_DROPS` resets to `0` when acquisition is disabled.
+- `FIFO_CAPACITY` is a read-only constant for software-visible bring-up checks.
 
 Important current caveats:
 
@@ -58,12 +64,14 @@ Control and data flow are:
    - `extclk_div_reg`
 3. Those control signals feed `ads1278_acq_top`, which owns the acquisition datapath.
 4. `ads1278_acq_top` instantiates:
+   - `ads1278_frame_fifo` for staged DMA buffering
    - `ads1278_spi_tdm` for DRDY-triggered 8 x 24-bit capture
    - `ads1278_extclk_gen` for the ADC external clock
    - `ads1278_sync_pulse` for active-low `SYNC`
 5. The acquisition block returns:
    - eight channel words
    - a packed `status` word
+   - staged FIFO debug words
 6. `ads1278_axi_slave` exposes those values through the read mux and forwards `status[0]` as `irq`.
 
 Reset and lifecycle notes:
@@ -78,6 +86,7 @@ Reset and lifecycle notes:
 
 - The current `new_data` behavior is convenient for RTL but awkward for software polling because it is not sticky.
 - `STATUS` does not currently expose a latched "sample available until acknowledged" bit.
+- The staged FIFO has no consumer yet, so long captures can intentionally drive it full during Phase 3 bring-up.
 - Sharing `EXTCLK_DIV` between the ADC clock generator and the SPI shift timing may not match the final desired hardware contract.
 - The base address is defined in the block design, so any future BD remap must be kept in sync with software documentation and code.
 
@@ -87,6 +96,7 @@ Reset and lifecycle notes:
 |------|------|
 | AXI slave register definition | `fpga/rtl/ads1278_axi_slave.sv` |
 | Acquisition wrapper | `fpga/rtl/ads1278_acq_top.v` |
+| Staged DMA FIFO | `fpga/rtl/ads1278_frame_fifo.v` |
 | SPI TDM capture | `fpga/rtl/ads1278_spi_tdm.v` |
 | EXTCLK generation | `fpga/rtl/ads1278_extclk_gen.v` |
 | SYNC pulse generation | `fpga/rtl/ads1278_sync_pulse.v` |

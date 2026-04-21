@@ -96,6 +96,7 @@ The snapshot flow matches the current RTL contract:
 
 ## Related docs
 
+- [DMA Frame Record](dma-frame-record.md)
 - [Server Protocol](server-protocol.md)
 - [Server MMIO Contract](server-mmio-contract.md)
 - [FPGA Register Map](fpga-register-map.md)

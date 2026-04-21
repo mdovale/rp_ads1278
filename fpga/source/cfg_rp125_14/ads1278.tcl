@@ -23,6 +23,7 @@ set files [list \
  "[file normalize "$origin_dir/rtl/red_pitaya_top.sv"]"\
  "[file normalize "$origin_dir/rtl/ads1278_axi_slave.sv"]"\
  "[file normalize "$origin_dir/rtl/ads1278_acq_top.v"]"\
+ "[file normalize "$origin_dir/rtl/ads1278_frame_fifo.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_spi_tdm.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_extclk_gen.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_sync_pulse.v"]"\

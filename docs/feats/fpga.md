@@ -24,7 +24,7 @@ At a high level, the FPGA layer does four things today:
 
 1. Drives the external ADS1278 signals on the Red Pitaya E1 expansion connector.
 2. Generates `EXTCLK` and `SYNC`, and clocks in the ADS1278 TDM stream on `DOUT1`.
-3. Latches eight 24-bit channels and packs acquisition state into a small AXI4-Lite register block.
+3. Latches eight 24-bit channels, stages fixed-size DMA records in a PL FIFO, and packs acquisition state into a small AXI4-Lite register block.
 4. Exposes that register block to the PS over AXI GP0 so the current `server/` can read and control the design.
 
 ## User-facing behavior
@@ -42,7 +42,7 @@ What is implemented today:
 | Area | Current behavior |
 |------|------|
 | Board IO | Uses E1 `exp_p_io[0:4]` for `SCLK`, `DOUT1`, `DRDY`, `SYNC`, and `EXTCLK` |
-| Acquisition | Waits for `DRDY`, delays, clocks in 192 bits, latches CH1..CH8, updates `STATUS` |
+| Acquisition | Waits for `DRDY`, delays, clocks in 192 bits, latches CH1..CH8, updates `STATUS`, and queues frames in a staged FIFO |
 | Control | Software can enable acquisition, trigger `SYNC`, and set `EXTCLK_DIV` |
 | Register access | PS reads and writes a small AXI4-Lite aperture at `0x42000000` |
 | Build/deploy | Repo scripts generate the project, build a bitstream, and deploy a `.bit.bin` to Red Pitaya OS 2.x+ |
@@ -60,7 +60,7 @@ The FPGA layer is organized around a small set of top-level responsibilities:
 2. `red_pitaya_ps.sv` and the generated block design expose the PS-side AXI GP0 interface into the PL.
 3. `ads1278_axi_slave.sv` implements the software-visible register block.
 4. `ads1278_acq_top.v` owns the acquisition datapath.
-5. `ads1278_spi_tdm.v`, `ads1278_extclk_gen.v`, and `ads1278_sync_pulse.v` implement the core ADS1278-facing behaviors.
+5. `ads1278_spi_tdm.v`, `ads1278_frame_fifo.v`, `ads1278_extclk_gen.v`, and `ads1278_sync_pulse.v` implement the core ADS1278-facing behaviors.
 6. The TCL and XDC files define the Vivado project, block design, and board pin mapping.
 
 The architectural boundary to keep in mind is:
@@ -77,6 +77,7 @@ The architectural boundary to keep in mind is:
 | PS integration | `fpga/rtl/red_pitaya_ps.sv` |
 | Register block | `fpga/rtl/ads1278_axi_slave.sv` |
 | Acquisition wrapper | `fpga/rtl/ads1278_acq_top.v` |
+| Staged DMA FIFO | `fpga/rtl/ads1278_frame_fifo.v` |
 | SPI capture | `fpga/rtl/ads1278_spi_tdm.v` |
 | Board constraints | `fpga/source/cons_rp125_14/ports.xdc` |
 | Project config | `fpga/source/cfg_rp125_14/ads1278.tcl` |

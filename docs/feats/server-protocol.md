@@ -109,6 +109,7 @@ Because the current server is a latest-sample streamer, protocol messages expose
 
 ## Related docs
 
+- [DMA Frame Record](dma-frame-record.md)
 - [Server](server.md)
 - [Server MMIO Contract](server-mmio-contract.md)
 - [FPGA Register Map](fpga-register-map.md)

@@ -14,6 +14,9 @@
 //   0x20  STATUS    R    [0] drdy_seen  [1] overflow  [31:16] frame_cnt
 //   0x24  CTRL      R/W  [0] sync_trigger (W1C)  [1] enable
 //   0x28  EXTCLK_DIV R/W half-period in sys-clk cycles (125 MHz / (2*val))
+//   0x2C  FIFO_STATUS R  [15:0] level  [16] empty  [17] full
+//   0x30  FIFO_DROPS  R  Count of frames not queued because the FIFO was full
+//   0x34  FIFO_CAPACITY R Configured frame depth of the staged DMA FIFO
 ////////////////////////////////////////////////////////////////////////////////
 
 module ads1278_axi_slave #(
@@ -60,6 +63,9 @@ assign sync_trigger = ctrl_reg[0];
 // Acquisition data from acq_top
 logic [DW-1:0] ch_data [8];
 logic [DW-1:0] status_reg;
+logic [DW-1:0] fifo_status_reg;
+logic [DW-1:0] fifo_drop_count_reg;
+logic [DW-1:0] fifo_capacity_reg;
 
 // ---- Acquisition core ----
 ads1278_acq_top u_acq (
@@ -79,6 +85,9 @@ ads1278_acq_top u_acq (
   .ch_data_6    (ch_data[6]),
   .ch_data_7    (ch_data[7]),
   .status       (status_reg),
+  .fifo_status  (fifo_status_reg),
+  .fifo_drop_count (fifo_drop_count_reg),
+  .fifo_capacity (fifo_capacity_reg),
   .ctrl_enable  (ctrl_enable),
   .sync_trigger (sync_trigger),
   .extclk_div   (extclk_div_reg)
@@ -184,6 +193,9 @@ if (slv_reg_rden) begin
     4'h8: bus.RDATA <= status_reg;
     4'h9: bus.RDATA <= ctrl_reg;
     4'hA: bus.RDATA <= extclk_div_reg;
+    4'hB: bus.RDATA <= fifo_status_reg;
+    4'hC: bus.RDATA <= fifo_drop_count_reg;
+    4'hD: bus.RDATA <= fifo_capacity_reg;
     default: bus.RDATA <= 32'hDEAD_BEEF;
   endcase
 end

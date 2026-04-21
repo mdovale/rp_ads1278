@@ -119,11 +119,13 @@ Recommended first encoding:
 - fixed-size records to simplify PL writers and server parsing,
 - optional timestamp deferred until later unless there is a strong immediate need.
 
-Questions to settle:
+Phase 2 decisions now confirmed:
 
-- whether to store raw 24-bit payloads or sign-extended 32-bit values,
-- whether to include full `status_raw` per frame or only reduced flags,
-- whether to include `extclk_div` in every frame or only in control metadata.
+- store channels as sign-extended 32-bit values in memory,
+- include full `status_raw` per frame,
+- keep `extclk_div` out of the per-frame record and treat it as control metadata,
+- keep the first-pass record timestamp-free,
+- treat DMA buffers as tightly packed arrays of one fixed-size record.
 
 Success criteria:
 

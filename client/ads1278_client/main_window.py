@@ -4,11 +4,24 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .controller import ClientController
 from .protocol import MIN_EXTCLK_DIV, SERVER_PORT
+
+# ADS1278 high-resolution mode: data rate = EXTCLK / 512.
+# EXTCLK from FPGA divider: EXTCLK = SYS_CLK / (2 * div_val).
+SYS_CLK_HZ = 125_000_000
+ADS1278_OSR_HR = 512
+# 24-bit two's-complement: positive full-scale code maps to +VREF.
+ADS1278_FULL_SCALE_CODE = 1 << 23
+
+Y_UNIT_CODES = "Codes"
+Y_UNIT_VOLTS = "Volts"
+X_UNIT_SAMPLES = "Samples"
+X_UNIT_TIME = "Time (s)"
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -16,7 +29,8 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self._controller = ClientController()
         self._settings = QtCore.QSettings("rp_ads1278", "client")
-        self._curves = []
+        self._curves: list[pg.PlotDataItem] = []
+        self._plots: list[pg.PlotItem] = []
 
         self.setWindowTitle("rp_ads1278 Client")
         self.resize(1400, 900)
@@ -36,8 +50,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         layout.addWidget(self._build_connection_bar())
         layout.addWidget(self._build_command_bar())
+        layout.addWidget(self._build_display_bar())
         layout.addWidget(self._build_status_bar())
         layout.addWidget(self._build_plot_widget(), 1)
+        self._apply_axis_labels()
 
         self.setCentralWidget(central)
 
@@ -134,6 +150,51 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addStretch(1)
         return widget
 
+    def _build_display_bar(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        layout.addWidget(QtWidgets.QLabel("Y axis"))
+        self.y_unit_combo = QtWidgets.QComboBox()
+        self.y_unit_combo.addItems([Y_UNIT_CODES, Y_UNIT_VOLTS])
+        self.y_unit_combo.setCurrentText(
+            self._settings.value("y_unit", Y_UNIT_CODES, type=str)
+        )
+        self.y_unit_combo.currentTextChanged.connect(self._on_y_unit_changed)
+        layout.addWidget(self.y_unit_combo)
+
+        layout.addSpacing(8)
+        layout.addWidget(QtWidgets.QLabel("VREF (V)"))
+        self.vref_input = QtWidgets.QDoubleSpinBox()
+        self.vref_input.setDecimals(6)
+        self.vref_input.setRange(0.000001, 100.0)
+        self.vref_input.setSingleStep(0.1)
+        self.vref_input.setValue(self._settings.value("vref_volts", 2.5, type=float))
+        self.vref_input.setToolTip(
+            "Reference voltage applied on the ADS1278EVM. "
+            "Used to convert 24-bit codes to volts: V = code * VREF / 2^23."
+        )
+        self.vref_input.valueChanged.connect(self._on_vref_changed)
+        layout.addWidget(self.vref_input)
+
+        layout.addSpacing(16)
+        layout.addWidget(QtWidgets.QLabel("X axis"))
+        self.x_unit_combo = QtWidgets.QComboBox()
+        self.x_unit_combo.addItems([X_UNIT_SAMPLES, X_UNIT_TIME])
+        self.x_unit_combo.setCurrentText(
+            self._settings.value("x_unit", X_UNIT_SAMPLES, type=str)
+        )
+        self.x_unit_combo.currentTextChanged.connect(self._on_x_unit_changed)
+        layout.addWidget(self.x_unit_combo)
+
+        self.sample_rate_label = QtWidgets.QLabel("fs: -")
+        layout.addSpacing(8)
+        layout.addWidget(self.sample_rate_label)
+
+        layout.addStretch(1)
+        return widget
+
     def _build_status_bar(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QHBoxLayout(widget)
@@ -157,9 +218,8 @@ class MainWindow(QtWidgets.QMainWindow):
             col = idx % 2
             plot = graphics.addPlot(row=row, col=col, title=f"CH{idx + 1}")
             plot.showGrid(x=True, y=True, alpha=0.25)
-            plot.setLabel("left", "ADC")
-            plot.setLabel("bottom", "Recent samples")
             curve = plot.plot(pen=pg.intColor(idx, hues=8))
+            self._plots.append(plot)
             self._curves.append(curve)
         return graphics
 
@@ -245,11 +305,75 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             widget.setEnabled(buttons_enabled)
 
+        divider = self._effective_divider(latest)
+        dt = self._sample_period(divider)
+        self._update_sample_rate_label(dt)
+
+        y_unit = self.y_unit_combo.currentText()
+        x_unit = self.x_unit_combo.currentText()
+        vref = self.vref_input.value()
+        y_scale = vref / ADS1278_FULL_SCALE_CODE if y_unit == Y_UNIT_VOLTS else None
+
         for curve, history in zip(self._curves, snapshot.channel_history):
             if history.size == 0:
                 curve.setData([], [])
+                continue
+
+            y = history.astype(np.float64) * y_scale if y_scale is not None else history
+            if x_unit == X_UNIT_TIME and dt is not None:
+                x = np.arange(history.size, dtype=np.float64) * dt
+                curve.setData(x, y)
             else:
-                curve.setData(history)
+                curve.setData(y)
+
+    def _on_y_unit_changed(self, value: str) -> None:
+        self._settings.setValue("y_unit", value)
+        self._apply_axis_labels()
+
+    def _on_x_unit_changed(self, value: str) -> None:
+        self._settings.setValue("x_unit", value)
+        self._apply_axis_labels()
+
+    def _on_vref_changed(self, value: float) -> None:
+        self._settings.setValue("vref_volts", value)
+
+    def _apply_axis_labels(self) -> None:
+        if not self._plots:
+            return
+        y_unit = self.y_unit_combo.currentText()
+        x_unit = self.x_unit_combo.currentText()
+        y_label = "Voltage (V)" if y_unit == Y_UNIT_VOLTS else "ADC code"
+        x_label = "Time (s)" if x_unit == X_UNIT_TIME else "Recent samples"
+        for plot in self._plots:
+            plot.setLabel("left", y_label)
+            plot.setLabel("bottom", x_label)
+
+    def _effective_divider(self, latest) -> int:
+        # Prefer the divider reported by the server; fall back to the user's
+        # current spinbox value so axis scaling still works pre-connect.
+        if latest is not None and latest.extclk_div >= MIN_EXTCLK_DIV:
+            return int(latest.extclk_div)
+        return int(self.divider_input.value())
+
+    @staticmethod
+    def _sample_period(divider: int) -> float | None:
+        if divider < MIN_EXTCLK_DIV:
+            return None
+        extclk_hz = SYS_CLK_HZ / (2.0 * divider)
+        fs_hz = extclk_hz / ADS1278_OSR_HR
+        if fs_hz <= 0:
+            return None
+        return 1.0 / fs_hz
+
+    def _update_sample_rate_label(self, dt: float | None) -> None:
+        if dt is None or dt <= 0:
+            self.sample_rate_label.setText("fs: -")
+            return
+        fs_hz = 1.0 / dt
+        if fs_hz >= 1000.0:
+            self.sample_rate_label.setText(f"fs: {fs_hz / 1000.0:.3f} kHz")
+        else:
+            self.sample_rate_label.setText(f"fs: {fs_hz:.2f} Hz")
 
     def _show_status(self, text: str, level: str) -> None:
         self.status_label.setText(text)

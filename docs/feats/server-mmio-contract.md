@@ -10,6 +10,7 @@ Define the current PS-to-FPGA MMIO interface clearly enough that the existing `s
 
 - In scope: physical base address, register offsets, access width, control semantics, status semantics, channel data representation, and current integration caveats that affect server design.
 - Out of scope: TCP framing, host-side protocol, GUI behavior, Linux service management, and any future non-MMIO transport such as DMA.
+- During the DMA migration, this MMIO contract remains the compatibility and debug path. New DMA work should add a separate data plane rather than silently redefining the register meanings documented here.
 
 ## User-facing behavior
 
@@ -30,6 +31,20 @@ Current server-visible register map:
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
 | `0x24` | `CTRL` | R/W | Bit `0` = one-shot `SYNC` trigger, bit `1` = acquisition enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared divider value used by current FPGA clocking logic |
+
+Phase 1 freeze for DMA bring-up:
+
+- Keep the base address, aperture, and register offsets above unchanged.
+- Keep `CTRL`, `STATUS`, and `EXTCLK_DIV` semantics stable so the current MMIO polling server and bring-up tools keep working while DMA is added elsewhere.
+- Keep the latest-sample register view available for debug even after a DMA path exists.
+
+Additional Phase 3 debug registers are available for FIFO bring-up without changing the current server contract:
+
+| Offset | Name | Access | Bring-up meaning |
+|------|------|------|------|
+| `0x2C` | `FIFO_STATUS` | R | Bits `[15:0]` = queued frame count, bit `16` = empty, bit `17` = full |
+| `0x30` | `FIFO_DROPS` | R | Count of staged DMA records dropped because the FIFO was full |
+| `0x34` | `FIFO_CAPACITY` | R | Configured FIFO depth in frames (`64`) |
 
 Current behavior a server can rely on:
 
@@ -70,6 +85,7 @@ Ownership and data flow are:
 4. `ads1278_acq_top` returns:
    - eight 32-bit channel words
    - one packed `status` word
+   - staged FIFO debug words
 5. `ads1278_axi_slave` exposes those values directly to software and forwards `status[0]` to `irq`.
 
 The packed status word is currently:
@@ -103,6 +119,8 @@ Useful checks for the current server bring-up path:
 - Read `CTRL`, `EXTCLK_DIV`, and `STATUS` before enabling acquisition to confirm reset-state expectations.
 - Write `CTRL[1] = 1` and confirm `EXTCLK` and acquisition-related behavior begin.
 - Read `frame_cnt` repeatedly and confirm it advances during successful acquisition.
+- Read `FIFO_STATUS` during acquisition and confirm the queued-frame level rises from zero.
+- Continue acquisition long enough to confirm `FIFO_DROPS` increments once the staged FIFO reaches capacity.
 - Trigger `SYNC` through `CTRL[0]` and observe the expected acquisition disturbance or recovery behavior.
 - Disable acquisition and confirm `frame_cnt` resets and `overflow` clears.
 
@@ -122,6 +140,7 @@ Useful checks for the current server bring-up path:
 
 - [FPGA Register Map](fpga-register-map.md)
 - [ADS1278 Acquisition Pipeline](ads1278-acquisition-pipeline.md)
+- [DMA Frame Record](dma-frame-record.md)
 - [Server](server.md)
 - [Server Protocol](server-protocol.md)
 - [Board IO Wiring](board-io-wiring.md)
