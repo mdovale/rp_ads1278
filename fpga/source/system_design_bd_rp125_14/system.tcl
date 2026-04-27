@@ -226,6 +226,14 @@ proc create_root_design { parentCell } {
    CONFIG.FREQ_HZ {125000000} \
    CONFIG.PROTOCOL {AXI4LITE} \
    ] $M_AXI_GP0
+  set S_AXI_HP0 [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:aximm_rtl:1.0 S_AXI_HP0 ]
+  set_property -dict [ list \
+   CONFIG.ADDR_WIDTH {32} \
+   CONFIG.DATA_WIDTH {64} \
+   CONFIG.FREQ_HZ {125000000} \
+   CONFIG.ID_WIDTH {6} \
+   CONFIG.PROTOCOL {AXI3} \
+   ] $S_AXI_HP0
 
   # Create ports
   set FCLK_CLK0 [ create_bd_port -dir O -type clk FCLK_CLK0 ]
@@ -239,7 +247,7 @@ proc create_root_design { parentCell } {
   set IRQ [ create_bd_port -dir I -type intr IRQ ]
   set PL_ACLK [ create_bd_port -dir I -type clk -freq_hz 125000000 PL_ACLK ]
   set_property -dict [ list \
-   CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0} \
+   CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0:S_AXI_HP0} \
    CONFIG.ASSOCIATED_RESET {PL_ARESETn} \
  ] $PL_ACLK
   set PL_ARESETn [ create_bd_port -dir I -type rst PL_ARESETn ]
@@ -677,7 +685,8 @@ proc create_root_design { parentCell } {
    CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
    CONFIG.PCW_USE_M_AXI_GP1 {0} \
    CONFIG.PCW_USE_S_AXI_GP0 {0} \
-   CONFIG.PCW_USE_S_AXI_HP0 {0} \
+   CONFIG.PCW_S_AXI_HP0_DATA_WIDTH {64} \
+   CONFIG.PCW_USE_S_AXI_HP0 {1} \
    CONFIG.PCW_USE_S_AXI_HP1 {0} \
    CONFIG.PCW_USE_S_AXI_HP2 {0} \
    CONFIG.PCW_USE_S_AXI_HP3 {0} \
@@ -689,10 +698,11 @@ proc create_root_design { parentCell } {
   connect_bd_intf_net -intf_net processing_system7_0_fixed_io [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins processing_system7/FIXED_IO]
   connect_bd_intf_net -intf_net processing_system7_GPIO_0 [get_bd_intf_ports GPIO] [get_bd_intf_pins processing_system7/GPIO_0]
   connect_bd_intf_net -intf_net processing_system7_M_AXI_GP0 [get_bd_intf_pins axi_protocol_converter_0/S_AXI] [get_bd_intf_pins processing_system7/M_AXI_GP0]
+  connect_bd_intf_net -intf_net processing_system7_S_AXI_HP0 [get_bd_intf_ports S_AXI_HP0] [get_bd_intf_pins processing_system7/S_AXI_HP0]
 
   # Create port connections
   connect_bd_net -net IRQ_1 [get_bd_ports IRQ] [get_bd_pins processing_system7/IRQ_F2P]
-  connect_bd_net -net PL_ACLK_1 [get_bd_ports PL_ACLK] [get_bd_pins axi_protocol_converter_0/aclk] [get_bd_pins processing_system7/M_AXI_GP0_ACLK]
+  connect_bd_net -net PL_ACLK_1 [get_bd_ports PL_ACLK] [get_bd_pins axi_protocol_converter_0/aclk] [get_bd_pins processing_system7/M_AXI_GP0_ACLK] [get_bd_pins processing_system7/S_AXI_HP0_ACLK]
   connect_bd_net -net PL_ARESETn_1 [get_bd_ports PL_ARESETn] [get_bd_pins axi_protocol_converter_0/aresetn]
   connect_bd_net -net processing_system7_0_fclk_clk2 [get_bd_ports FCLK_CLK2] [get_bd_pins processing_system7/FCLK_CLK2]
   connect_bd_net -net processing_system7_0_fclk_reset1_n [get_bd_ports FCLK_RESET1_N] [get_bd_pins processing_system7/FCLK_RESET1_N]

@@ -18,10 +18,14 @@ set obj [get_filesets sources_1]
 set files [list \
  "[file normalize "$origin_dir/rtl/axi4_lite_if.sv"]"\
  "[file normalize "$origin_dir/rtl/gpio_if.sv"]"\
+ "[file normalize "$origin_dir/rtl/output_buffer.v"]"\
+ "[file normalize "$origin_dir/rtl/axis_ram_writer.v"]"\
  "[file normalize "$origin_dir/rtl/red_pitaya_pll.sv"]"\
  "[file normalize "$origin_dir/rtl/red_pitaya_ps.sv"]"\
  "[file normalize "$origin_dir/rtl/red_pitaya_top.sv"]"\
  "[file normalize "$origin_dir/rtl/ads1278_axi_slave.sv"]"\
+ "[file normalize "$origin_dir/rtl/ads1278_dma_pattern_source.v"]"\
+ "[file normalize "$origin_dir/rtl/ads1278_dma_phase4.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_acq_top.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_frame_fifo.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_spi_tdm.v"]"\

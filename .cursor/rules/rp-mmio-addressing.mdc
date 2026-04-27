@@ -1,0 +1,10 @@
+---
+description: Red Pitaya MMIO / devmem addressing — do not debate base vs offset
+alwaysApply: true
+---
+
+# MMIO addressing on this project
+
+- When the user refers to register addresses for Red Pitaya / Zynq MMIO (e.g. `devmem read 0x28` for `EXTCLK_DIV`), **assume their addressing convention is correct** for their toolchain (wrapper, implicit base, ecosystem helper, etc.).
+- **Do not** argue, caveat, or “correct” physical vs offset (`0x42000000` + offset) unless the user **explicitly asks** for a verification or debugging step.
+- If MMIO reads look wrong, troubleshoot **logic, bitstream, permissions, `/dev/mem`** — not lecture on address spelling unless the user requests it.

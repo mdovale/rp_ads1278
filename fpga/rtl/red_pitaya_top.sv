@@ -190,6 +190,16 @@ assign daisy_n_o = 1'bz;
 gpio_if #(.DW (24)) gpio_dummy ();
 
 logic gpio_irq;
+logic dma_phase4_enable;
+logic [1:0] dma_phase4_mode;
+logic [31:0] dma_phase4_base_addr;
+logic [31:0] dma_phase4_buf_size;
+logic [15:0] dma_phase4_write_index;
+logic dma_phase4_wrap_pulse;
+logic dma_phase4_running;
+logic dma_phase4_config_error;
+logic dma_phase4_bresp_error_pulse;
+logic [1:0] dma_phase4_last_bresp;
 
 // Keep the PS-facing AXI path on the stock FCLK/reset pair instead of tying it
 // to the ADC PLL domain.
@@ -221,6 +231,16 @@ red_pitaya_ps ps (
   .fclk_rstn_o   (frstn      ),
   .gpio          (gpio_dummy),
   .irq           (gpio_irq),
+  .dma_phase4_enable (dma_phase4_enable),
+  .dma_phase4_mode (dma_phase4_mode),
+  .dma_phase4_base_addr (dma_phase4_base_addr),
+  .dma_phase4_buf_size (dma_phase4_buf_size),
+  .dma_phase4_write_index (dma_phase4_write_index),
+  .dma_phase4_wrap_pulse (dma_phase4_wrap_pulse),
+  .dma_phase4_running (dma_phase4_running),
+  .dma_phase4_config_error (dma_phase4_config_error),
+  .dma_phase4_bresp_error_pulse (dma_phase4_bresp_error_pulse),
+  .dma_phase4_last_bresp (dma_phase4_last_bresp),
   .bus           (bus)
 );
 
@@ -236,7 +256,8 @@ logic       ads_extclk;
 logic [7:0] ads_led;
 
 ads1278_axi_slave #(
-  .DW (32)
+  .DW (32),
+  .AW (7)
 ) u_ads1278 (
   .sclk_o   (ads_sclk  ),
   .miso_i   (ads_miso  ),
@@ -245,6 +266,16 @@ ads1278_axi_slave #(
   .extclk_o (ads_extclk),
   .led_o    (ads_led   ),
   .irq      (gpio_irq  ),
+  .dma_phase4_enable (dma_phase4_enable),
+  .dma_phase4_mode (dma_phase4_mode),
+  .dma_phase4_base_addr (dma_phase4_base_addr),
+  .dma_phase4_buf_size (dma_phase4_buf_size),
+  .dma_phase4_write_index (dma_phase4_write_index),
+  .dma_phase4_wrap_pulse (dma_phase4_wrap_pulse),
+  .dma_phase4_running (dma_phase4_running),
+  .dma_phase4_config_error (dma_phase4_config_error),
+  .dma_phase4_bresp_error_pulse (dma_phase4_bresp_error_pulse),
+  .dma_phase4_last_bresp (dma_phase4_last_bresp),
   .bus      (bus        )
 );
 
