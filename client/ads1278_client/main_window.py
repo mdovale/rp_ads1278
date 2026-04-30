@@ -9,6 +9,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .controller import ClientController
 from .protocol import MIN_EXTCLK_DIV, SERVER_PORT
+from .units import (
+    DEFAULT_ADC_REFERENCE_VOLTS,
+    frame_counts_to_relative_seconds,
+    raw_codes_to_volts,
+    sample_indices_to_relative_seconds,
+)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -17,6 +23,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._controller = ClientController()
         self._settings = QtCore.QSettings("rp_ads1278", "client")
         self._curves = []
+        self._plots = []
 
         self.setWindowTitle("rp_ads1278 Client")
         self.resize(1400, 900)
@@ -131,6 +138,37 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_logging_button.clicked.connect(self._controller.stop_logging)
         layout.addWidget(self.stop_logging_button)
 
+        layout.addSpacing(16)
+        self.engineering_units_checkbox = QtWidgets.QCheckBox("Plot V/s")
+        self.engineering_units_checkbox.setToolTip(
+            "Display ADC codes as volts and frame counts as relative seconds"
+        )
+        self.engineering_units_checkbox.setChecked(
+            self._settings.value("plot_engineering_units", False, type=bool)
+        )
+        self.engineering_units_checkbox.toggled.connect(
+            self._handle_display_units_changed
+        )
+        layout.addWidget(self.engineering_units_checkbox)
+
+        layout.addWidget(QtWidgets.QLabel("Vref"))
+        self.reference_voltage_input = QtWidgets.QDoubleSpinBox()
+        self.reference_voltage_input.setRange(0.001, 10.0)
+        self.reference_voltage_input.setDecimals(3)
+        self.reference_voltage_input.setSingleStep(0.1)
+        self.reference_voltage_input.setSuffix(" V")
+        self.reference_voltage_input.setValue(
+            self._settings.value(
+                "adc_reference_volts",
+                DEFAULT_ADC_REFERENCE_VOLTS,
+                type=float,
+            )
+        )
+        self.reference_voltage_input.valueChanged.connect(
+            lambda value: self._settings.setValue("adc_reference_volts", value)
+        )
+        layout.addWidget(self.reference_voltage_input)
+
         layout.addStretch(1)
         return widget
 
@@ -160,7 +198,9 @@ class MainWindow(QtWidgets.QMainWindow):
             plot.setLabel("left", "ADC")
             plot.setLabel("bottom", "Recent samples")
             curve = plot.plot(pen=pg.intColor(idx, hues=8))
+            self._plots.append(plot)
             self._curves.append(curve)
+        self._update_plot_labels()
         return graphics
 
     def _toggle_connection(self) -> None:
@@ -248,8 +288,40 @@ class MainWindow(QtWidgets.QMainWindow):
         for curve, history in zip(self._curves, snapshot.channel_history):
             if history.size == 0:
                 curve.setData([], [])
+            elif self.engineering_units_checkbox.isChecked():
+                extclk_div = latest.extclk_div if latest is not None else MIN_EXTCLK_DIV
+                seconds = frame_counts_to_relative_seconds(
+                    snapshot.frame_history,
+                    extclk_div,
+                )
+                if seconds.size != history.size:
+                    seconds = sample_indices_to_relative_seconds(
+                        history.size,
+                        extclk_div,
+                    )
+                curve.setData(
+                    seconds,
+                    raw_codes_to_volts(history, self.reference_voltage_input.value()),
+                )
             else:
                 curve.setData(history)
+
+    def _handle_display_units_changed(self, enabled: bool) -> None:
+        self._settings.setValue("plot_engineering_units", enabled)
+        self._update_plot_labels()
+        self._refresh()
+
+    def _update_plot_labels(self) -> None:
+        if self.engineering_units_checkbox.isChecked():
+            left_label = ("Voltage", "V")
+            bottom_label = ("Time", "s")
+        else:
+            left_label = ("ADC", None)
+            bottom_label = ("Recent samples", None)
+
+        for plot in self._plots:
+            plot.setLabel("left", left_label[0], units=left_label[1])
+            plot.setLabel("bottom", bottom_label[0], units=bottom_label[1])
 
     def _show_status(self, text: str, level: str) -> None:
         self.status_label.setText(text)

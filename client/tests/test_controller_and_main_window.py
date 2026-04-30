@@ -13,6 +13,12 @@ from ads1278_client.controller import ClientController, ControllerSnapshot
 from ads1278_client.main_window import MainWindow
 from ads1278_client.models import Ads1278Message, CommandOpcode, MessageType
 from ads1278_client.protocol import SERVER_PORT, pack_mark_capture
+from ads1278_client.units import (
+    frame_counts_to_relative_seconds,
+    raw_codes_to_volts,
+    sample_indices_to_relative_seconds,
+    sample_period_seconds,
+)
 
 
 def _message(
@@ -39,6 +45,29 @@ def _message(
 
 def _empty_history() -> list[np.ndarray]:
     return [np.asarray([], dtype=np.int32) for _ in range(8)]
+
+
+def _empty_frame_history() -> np.ndarray:
+    return np.asarray([], dtype=np.int32)
+
+
+def test_unit_helpers_convert_adc_codes_and_frame_counts() -> None:
+    samples = np.asarray([-(1 << 23), 0, 1 << 22], dtype=np.int32)
+    volts = raw_codes_to_volts(samples, reference_volts=2.5)
+
+    assert np.allclose(volts, [-2.5, 0.0, 1.25])
+    assert np.isclose(sample_period_seconds(625), 0.00512)
+    assert np.allclose(
+        frame_counts_to_relative_seconds(
+            np.asarray([65534, 65535, 0], dtype=np.int32),
+            extclk_div=625,
+        ),
+        [-0.01024, -0.00512, 0.0],
+    )
+    assert np.allclose(
+        sample_indices_to_relative_seconds(3, extclk_div=625),
+        [-0.01024, -0.00512, 0.0],
+    )
 
 
 def test_controller_clears_latest_message_on_disconnect() -> None:
@@ -188,6 +217,7 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
         status_level="ok",
         logging_path="",
         channel_history=_empty_history(),
+        frame_history=_empty_frame_history(),
     )
 
     class FakeController:

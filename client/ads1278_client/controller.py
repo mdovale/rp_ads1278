@@ -32,6 +32,7 @@ class ControllerSnapshot:
     status_level: str
     logging_path: str
     channel_history: Sequence[np.ndarray]
+    frame_history: np.ndarray
 
 
 class ClientController:
@@ -41,6 +42,7 @@ class ClientController:
         self._channel_history: List[Deque[int]] = [
             deque(maxlen=history_length) for _ in range(CHANNEL_COUNT)
         ]
+        self._frame_history: Deque[int] = deque(maxlen=history_length)
         self._connected = False
         self._host = ""
         self._port = SERVER_PORT
@@ -115,7 +117,11 @@ class ClientController:
 
     def get_snapshot(self) -> ControllerSnapshot:
         with self._lock:
-            history = [np.asarray(list(channel), dtype=np.int32) for channel in self._channel_history]
+            history = [
+                np.asarray(list(channel), dtype=np.int32)
+                for channel in self._channel_history
+            ]
+            frame_history = np.asarray(list(self._frame_history), dtype=np.int32)
             return ControllerSnapshot(
                 connected=self._connected,
                 host=self._host,
@@ -126,6 +132,7 @@ class ClientController:
                 status_level=self._status_level,
                 logging_path=self._logging_path,
                 channel_history=history,
+                frame_history=frame_history,
             )
 
     def _handle_connected(self, capability_line: str) -> None:
@@ -154,6 +161,7 @@ class ClientController:
         with self._lock:
             self._latest_message = message
             if message.message_type is MessageType.SAMPLE:
+                self._frame_history.append(message.frame_cnt)
                 for idx, channel in enumerate(message.channels):
                     self._channel_history[idx].append(channel)
                 if self._logger is not None:

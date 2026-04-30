@@ -2,6 +2,8 @@
 .vscode
 .DS_Store
 .reference
+reference/
+.cursor/rules/rp-mmio-addressing.mdc
 
 # Build outputs
 build-cross/

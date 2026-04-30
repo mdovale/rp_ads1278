@@ -38,6 +38,10 @@ The GUI defaults to `127.0.0.1:5000`. Enter the Red Pitaya host, connect, and
 use the command bar to enable streaming, trigger `SYNC`, change `EXTCLK_DIV`,
 and start or stop CSV logging.
 
+Enable `Plot V/s` to display each trace as volts versus relative seconds instead
+of raw ADC codes versus recent sample index. The voltage conversion uses the
+editable `Vref` value and the time axis follows the reported `EXTCLK_DIV`.
+
 The current server requires `EXTCLK_DIV >= 3`. The GUI enforces that minimum and
 rejects smaller values before sending them.
 
