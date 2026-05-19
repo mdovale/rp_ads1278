@@ -22,6 +22,7 @@ class FakeAds1278Server:
         self.frame_cnt = 0
         self.msg_seq = 0
         self.extclk_div = 625
+        self.mod_div = 6_250_000
         self.phase = 0.0
 
     def serve(self, host: str, port: int) -> None:
@@ -98,6 +99,11 @@ class FakeAds1278Server:
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))
                 continue
 
+            if opcode == CommandOpcode.SET_MOD_DIV and value >= 2:
+                self.mod_div = value
+                conn.sendall(self.make_message(MessageType.ACK, opcode, value))
+                continue
+
             conn.sendall(self.make_message(MessageType.ERROR, opcode, value))
 
     def make_message(self, msg_type: MessageType, opcode: int, value: int) -> bytes:
@@ -125,6 +131,7 @@ class FakeAds1278Server:
             status_raw,
             ctrl_raw,
             self.extclk_div,
+            self.mod_div,
             channels,
         )
 

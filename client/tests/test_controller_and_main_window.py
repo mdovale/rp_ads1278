@@ -30,6 +30,7 @@ def _message(
     status_raw: int = 0x00010001,
     ctrl_raw: int = 0x00000002,
     extclk_div: int = 625,
+    mod_div: int = 6_250_000,
 ) -> Ads1278Message:
     return Ads1278Message(
         msg_type=msg_type,
@@ -39,6 +40,7 @@ def _message(
         status_raw=status_raw,
         ctrl_raw=ctrl_raw,
         extclk_div=extclk_div,
+        mod_div=mod_div,
         channels=(1, 2, 3, 4, 5, 6, 7, 8),
     )
 
@@ -111,7 +113,7 @@ def test_controller_starts_csv_only_after_capture_marker_ack(
     monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
 
     controller = ClientController()
-    controller._handle_connected("RP_CAP:ads1278_v1")
+    controller._handle_connected("RP_CAP:ads1278_v2")
 
     path = tmp_path / "capture.csv"
     controller.start_logging(path)
@@ -163,7 +165,7 @@ def test_controller_ignores_stale_capture_marker_ack(monkeypatch, tmp_path) -> N
     monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
 
     controller = ClientController()
-    controller._handle_connected("RP_CAP:ads1278_v1")
+    controller._handle_connected("RP_CAP:ads1278_v2")
 
     first_path = tmp_path / "first.csv"
     second_path = tmp_path / "second.csv"
@@ -211,7 +213,7 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
         connected=True,
         host="127.0.0.1",
         port=SERVER_PORT,
-        capability_line="RP_CAP:ads1278_v1",
+        capability_line="RP_CAP:ads1278_v2",
         latest_message=_message(extclk_div=625),
         status_text="Connected",
         status_level="ok",
@@ -237,6 +239,9 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
             return None
 
         def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
             return None
 
         def start_logging(self, path: str) -> None:

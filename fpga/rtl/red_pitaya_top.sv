@@ -233,6 +233,7 @@ logic       ads_miso;
 logic       ads_drdy_n;
 logic       ads_sync_n;
 logic       ads_extclk;
+logic       ads_mod;
 logic [7:0] ads_led;
 
 ads1278_axi_slave #(
@@ -243,6 +244,7 @@ ads1278_axi_slave #(
   .drdy_n_i (ads_drdy_n),
   .sync_n_o (ads_sync_n),
   .extclk_o (ads_extclk),
+  .mod_o    (ads_mod   ),
   .led_o    (ads_led   ),
   .irq      (gpio_irq  ),
   .bus      (bus        )
@@ -255,7 +257,8 @@ ads1278_axi_slave #(
 //   exp_p_io[2] = DRDY      (input  ← ADS1278 /DRDY)
 //   exp_p_io[3] = SYNC      (output → ADS1278 /SYNC)
 //   exp_p_io[4] = EXTCLK    (output → ADS1278 CLK)
-//   exp_p_io[5:7], exp_n_io[0:7] = unused (high-Z)
+//   exp_p_io[5] = MOD       (output → 10 Hz default modulation square wave)
+//   exp_p_io[6:7], exp_n_io[0:7] = unused (high-Z)
 ////////////////////////////////////////////////////////////////////////////////
 
 assign exp_p_out[0] = ads_sclk;
@@ -263,7 +266,7 @@ assign exp_p_out[1] = 1'b0;
 assign exp_p_out[2] = 1'b0;
 assign exp_p_out[3] = ads_sync_n;
 assign exp_p_out[4] = ads_extclk;
-assign exp_p_out[5] = 1'b0;
+assign exp_p_out[5] = ads_mod;
 assign exp_p_out[6] = 1'b0;
 assign exp_p_out[7] = 1'b0;
 
@@ -272,7 +275,7 @@ assign exp_p_t[1] = 1'b1;
 assign exp_p_t[2] = 1'b1;
 assign exp_p_t[3] = 1'b0;
 assign exp_p_t[4] = 1'b0;
-assign exp_p_t[5] = 1'b1;
+assign exp_p_t[5] = 1'b0;
 assign exp_p_t[6] = 1'b1;
 assign exp_p_t[7] = 1'b1;
 

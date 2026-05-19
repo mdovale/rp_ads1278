@@ -1,6 +1,6 @@
 # Client
 
-This doc covers the current `client/` layer in `rp_ads1278`: a Python desktop GUI that connects to the Red Pitaya server, consumes the fixed `ads1278_v1` TCP protocol, plots eight live channels, exposes the three supported control commands, and optionally logs streamed samples to CSV.
+This doc covers the current `client/` layer in `rp_ads1278`: a Python desktop GUI that connects to the Red Pitaya server, consumes the fixed `ads1278_v2` TCP protocol, plots eight live channels, exposes acquisition and modulation controls, and optionally logs streamed samples to CSV.
 
 ## Goal
 
@@ -8,7 +8,7 @@ Provide a small host-side bring-up client that makes the current server stream o
 
 ## Scope
 
-- In scope: local desktop execution, one TCP connection to one server, capability-line validation, fixed-size binary message parsing, live plotting, enable/disable and `SYNC` and divider controls, and CSV logging for `SAMPLE` messages.
+- In scope: local desktop execution, one TCP connection to one server, capability-line validation, fixed-size binary message parsing, live plotting, enable/disable, `SYNC`, divider, modulation frequency controls, and CSV logging for `SAMPLE` messages.
 - Out of scope: protocol negotiation beyond the fixed capability check, multi-device control, offline import, derived DSP views, timing-accurate recording, and guaranteed gap-free history capture.
 
 ## User-facing behavior
@@ -27,11 +27,11 @@ Current run and test entry points are:
 Current runtime behavior is:
 
 - The GUI defaults to `127.0.0.1:5000` and lets the user change host and port before connecting.
-- The client requires the exact capability line `RP_CAP:ads1278_v1` before it accepts binary traffic.
-- After the handshake, the client decodes the fixed 60-byte little-endian server messages defined in [Server Protocol](server-protocol.md).
-- The top bar shows connection state, `frame_cnt`, `msg_seq`, enable state, overflow state, and the currently reported divider.
+- The client requires the exact capability line `RP_CAP:ads1278_v2` before it accepts binary traffic.
+- After the handshake, the client decodes the fixed 64-byte little-endian server messages defined in [Server Protocol](server-protocol.md).
+- The top bar shows connection state, `frame_cnt`, `msg_seq`, enable state, overflow state, the currently reported EXTCLK divider, and modulation frequency.
 - The main view plots `CH1` through `CH8` as eight live traces.
-- `Enable`, `Disable`, `SYNC`, and `Set divider` send the documented binary commands to the server.
+- `Enable`, `Disable`, `SYNC`, `Set divider`, and `Set MOD` send the documented binary commands to the server.
 - `ACK` and `ERROR` update the displayed state immediately and also surface a visible status line that includes the echoed opcode and value.
 - CSV logging writes rows only for `SAMPLE` messages and includes host timestamp plus server metadata and all eight channels.
 - Logging stops cleanly on manual stop or disconnect.
@@ -52,8 +52,8 @@ The connection lifecycle is:
 
 1. The user clicks `Connect`.
 2. The controller starts a background transport worker.
-3. The worker connects to the configured host and port, reads until newline, validates `RP_CAP:ads1278_v1`, and forwards any binary remainder into the message parser.
-4. The worker parses fixed 60-byte messages and pushes `Ads1278Message` objects back to the controller.
+3. The worker connects to the configured host and port, reads until newline, validates `RP_CAP:ads1278_v2`, and forwards any binary remainder into the message parser.
+4. The worker parses fixed 64-byte messages and pushes `Ads1278Message` objects back to the controller.
 5. The controller updates the latest snapshot for all message types, appends plot data only for `SAMPLE`, and logs only `SAMPLE` rows when CSV logging is active.
 6. The Qt GUI polls a thread-safe controller snapshot on a timer and updates labels and plots on the main thread.
 7. On disconnect or transport failure, the worker stops, the controller closes any active CSV logger, and the GUI returns to the disconnected state.
@@ -78,6 +78,7 @@ The connection lifecycle is:
 - Click `SYNC` and confirm an `ACK` is shown.
 - Set divider `625` and confirm the displayed divider updates.
 - Set divider `2` and confirm an `ERROR` is shown.
+- Set MOD frequency `10 Hz` and confirm the displayed modulation frequency updates to `10.000 Hz`.
 - Start CSV logging, re-enable streaming, and confirm the file contains only `SAMPLE` rows with negative values preserved.
 
 ## Key files

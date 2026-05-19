@@ -15,7 +15,8 @@ int main(void)
     assert(offsetof(ads1278_message, status_raw) == 16u);
     assert(offsetof(ads1278_message, ctrl_raw) == 20u);
     assert(offsetof(ads1278_message, extclk_div) == 24u);
-    assert(offsetof(ads1278_message, channels[0]) == 28u);
-    assert(offsetof(ads1278_message, channels[7]) == 56u);
+    assert(offsetof(ads1278_message, mod_div) == 28u);
+    assert(offsetof(ads1278_message, channels[0]) == 32u);
+    assert(offsetof(ads1278_message, channels[7]) == 60u);
     return 0;
 }

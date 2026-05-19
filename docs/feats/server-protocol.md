@@ -9,7 +9,7 @@ Define the current network contract clearly enough that the implemented Python c
 ## Scope
 
 - In scope: the capability line, default TCP port, binary command encoding, binary message encoding, little-endian assumptions, and current emission rules.
-- Out of scope: the FPGA register map itself, GUI behavior, Linux service setup, and any future protocol revision beyond `ads1278_v1`.
+- Out of scope: the FPGA register map itself, GUI behavior, Linux service setup, and any future protocol revision beyond `ads1278_v2`.
 
 ## User-facing behavior
 
@@ -23,7 +23,7 @@ Current transport assumptions are:
 Connection startup is:
 
 1. Client connects to the TCP port.
-2. Server sends `RP_CAP:ads1278_v1\n`.
+2. Server sends `RP_CAP:ads1278_v2\n`.
 3. Server sends one binary `SAMPLE` message immediately, even if acquisition is currently disabled.
 
 Client-to-server commands are fixed 8-byte messages:
@@ -40,10 +40,12 @@ Current opcodes are:
 | `1` | `SET_ENABLE` | `value` must be `0` or `1` |
 | `2` | `TRIGGER_SYNC` | `value` is ignored by the server |
 | `3` | `SET_EXTCLK_DIV` | `value` must be `>= 3` |
+| `4` | `MARK_CAPTURE` | `value` is ignored by the server |
+| `5` | `SET_MOD_DIV` | `value` must be `>= 2` |
 
 Unknown opcodes are rejected.
 
-Server-to-client binary messages are fixed 60-byte payloads:
+Server-to-client binary messages are fixed 64-byte payloads:
 
 | Word | Field | Meaning |
 |------|------|------|
@@ -54,14 +56,15 @@ Server-to-client binary messages are fixed 60-byte payloads:
 | `4` | `status_raw` | Raw FPGA `STATUS` word from the latest coherent snapshot |
 | `5` | `ctrl_raw` | Raw FPGA `CTRL` word from the latest coherent snapshot |
 | `6` | `extclk_div` | Raw FPGA divider word from the latest coherent snapshot |
-| `7` | `ch1` | Signed 32-bit channel sample |
-| `8` | `ch2` | Signed 32-bit channel sample |
-| `9` | `ch3` | Signed 32-bit channel sample |
-| `10` | `ch4` | Signed 32-bit channel sample |
-| `11` | `ch5` | Signed 32-bit channel sample |
-| `12` | `ch6` | Signed 32-bit channel sample |
-| `13` | `ch7` | Signed 32-bit channel sample |
-| `14` | `ch8` | Signed 32-bit channel sample |
+| `7` | `mod_div` | Raw FPGA modulation half-period divider from the latest coherent snapshot |
+| `8` | `ch1` | Signed 32-bit channel sample |
+| `9` | `ch2` | Signed 32-bit channel sample |
+| `10` | `ch3` | Signed 32-bit channel sample |
+| `11` | `ch4` | Signed 32-bit channel sample |
+| `12` | `ch5` | Signed 32-bit channel sample |
+| `13` | `ch6` | Signed 32-bit channel sample |
+| `14` | `ch7` | Signed 32-bit channel sample |
+| `15` | `ch8` | Signed 32-bit channel sample |
 
 Emission rules are:
 
@@ -77,7 +80,7 @@ The protocol implementation is intentionally simple:
 
 1. `protocol.h` defines the packed `ads1278_command` and `ads1278_message` structs and compile-time size guards.
 2. `cmd_parse.c` buffers short `recv()` chunks until a full 8-byte command is available, then validates opcode/value rules.
-3. `server.c` turns validated commands into MMIO writes, refreshes the latest coherent snapshot, and emits one 60-byte message per response.
+3. `server.c` turns validated commands into MMIO writes, refreshes the latest coherent snapshot, and emits one 64-byte message per response.
 4. `memory_map.c` sign-extends channel words before they are copied into `ads1278_message`, so clients do not have to reinterpret the raw 24-bit payload.
 
 Because the current server is a latest-sample streamer, protocol messages expose current state, not a guaranteed lossless frame history.
@@ -92,9 +95,10 @@ Because the current server is a latest-sample streamer, protocol messages expose
 ## Manual QA
 
 - Connect with `nc` or a small Python client and confirm the ASCII capability line arrives first.
-- Confirm the next binary payload is exactly 60 bytes.
+- Confirm the next binary payload is exactly 64 bytes.
 - Send `SET_ENABLE 1` and confirm the next response is `ACK` with echoed opcode/value.
 - Send `SET_EXTCLK_DIV 2` and confirm the next response is `ERROR`.
+- Send `SET_MOD_DIV 6250000` and confirm the next response is `ACK` with `mod_div = 6250000`.
 - Confirm negative channel inputs appear as negative signed 32-bit values in the binary message payload.
 
 ## Key files

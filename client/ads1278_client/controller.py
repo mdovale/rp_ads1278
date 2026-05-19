@@ -16,6 +16,7 @@ from .protocol import (
     pack_mark_capture,
     pack_set_enable,
     pack_set_extclk_div,
+    pack_set_modulation_frequency,
     pack_trigger_sync,
 )
 from .transport import TransportClient
@@ -88,6 +89,9 @@ class ClientController:
 
     def set_extclk_div(self, divider: int) -> None:
         self._transport.send_command(pack_set_extclk_div(divider))
+
+    def set_modulation_frequency(self, frequency_hz: float) -> None:
+        self._transport.send_command(pack_set_modulation_frequency(frequency_hz))
 
     def start_logging(self, path: str | Path) -> None:
         logging_path = str(Path(path))

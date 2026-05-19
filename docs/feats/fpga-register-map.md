@@ -4,7 +4,7 @@ This doc covers the current MMIO register block exposed by the FPGA acquisition 
 
 ## Goal
 
-Define the current register-level behavior that software can rely on when reading samples, enabling acquisition, triggering `SYNC`, and configuring the shared clock divider.
+Define the current register-level behavior that software can rely on when reading samples, enabling acquisition, triggering `SYNC`, configuring the shared clock divider, and configuring the modulation output divider.
 
 ## Scope
 
@@ -30,6 +30,7 @@ The current register map is:
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
 | `0x24` | `CTRL` | R/W | Bit `0` = `sync_trigger`, bit `1` = acquisition enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared half-period divider used by the current clocking path |
+| `0x2C` | `MOD_DIV` | R/W | Modulation square-wave half-period divider, `125 MHz / (2 * MOD_DIV)` |
 
 Current read and write semantics:
 
@@ -38,6 +39,7 @@ Current read and write semantics:
 - Writing `CTRL[1] = 1` enables acquisition and clock generation. Clearing it disables both.
 - Writing `CTRL[0] = 1` triggers a one-shot `SYNC` pulse. The bit auto-clears in hardware on the next bus clock.
 - `EXTCLK_DIV` resets to `625` (`0x271`), which corresponds to a nominal `100 kHz` output from a `125 MHz` input clock using the current divider formula.
+- `MOD_DIV` resets to `6,250,000`, which corresponds to a nominal `10 Hz` modulation square wave from a `125 MHz` input clock.
 
 Important current caveats:
 
@@ -53,9 +55,10 @@ The register block is implemented in `ads1278_axi_slave`, which is the AXI4-Lite
 Control and data flow are:
 
 1. The PS issues AXI4-Lite reads and writes through the shared `axi4_lite_if` bus.
-2. `ads1278_axi_slave` decodes register accesses and exposes two control registers:
+2. `ads1278_axi_slave` decodes register accesses and exposes three control registers:
    - `ctrl_reg`
    - `extclk_div_reg`
+   - `mod_div_reg`
 3. Those control signals feed `ads1278_acq_top`, which owns the acquisition datapath.
 4. `ads1278_acq_top` instantiates:
    - `ads1278_spi_tdm` for DRDY-triggered 8 x 24-bit capture
@@ -65,11 +68,13 @@ Control and data flow are:
    - eight channel words
    - a packed `status` word
 6. `ads1278_axi_slave` exposes those values through the read mux and forwards `status[0]` as `irq`.
+7. `ads1278_axi_slave` also generates the modulation square wave directly from `mod_div_reg` and exposes it to `red_pitaya_top.sv` for `exp_p_io[5]`.
 
 Reset and lifecycle notes:
 
 - `CTRL` resets to `0`, so acquisition starts disabled.
 - `EXTCLK_DIV` resets to `625`.
+- `MOD_DIV` resets to `6,250,000`, so the modulation output starts at `10 Hz`.
 - `frame_cnt` resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
 - The channel registers update only when a full 192-bit frame is captured and latched.

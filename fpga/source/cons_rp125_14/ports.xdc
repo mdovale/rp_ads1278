@@ -103,7 +103,8 @@ set_property PACKAGE_PIN U13 [get_ports {dac_pwm_o[3]}]
 #   exp_p_io[2]  J18  DRDY    (input)
 #   exp_p_io[3]  K17  SYNC    (output)
 #   exp_p_io[4]  L14  EXTCLK  (output)
-#   exp_p_io[5..7]    unused
+#   exp_p_io[5]  L16  MOD     (output, 10 Hz default)
+#   exp_p_io[6..7]    unused
 #   exp_n_io[0..7]    unused
 
 set_property -dict {PACKAGE_PIN G17 IOSTANDARD LVCMOS33} [get_ports {exp_p_io[0]}]
@@ -130,6 +131,8 @@ set_property SLEW  FAST [get_ports {exp_p_io[3]}]
 set_property DRIVE 8    [get_ports {exp_p_io[3]}]
 set_property SLEW  FAST [get_ports {exp_p_io[4]}]
 set_property DRIVE 8    [get_ports {exp_p_io[4]}]
+set_property SLEW  FAST [get_ports {exp_p_io[5]}]
+set_property DRIVE 8    [get_ports {exp_p_io[5]}]
 
 ### SATA connector
 set_property IOSTANDARD LVCMOS18 [get_ports {daisy_p_o[*]}]

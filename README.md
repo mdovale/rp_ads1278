@@ -25,6 +25,7 @@ This document describes the intended **end-state** of `rp_ads1278`: a Red Pitaya
 | **SPI clock** | E1 `exp_p_io[0]` (G17) | `SCLK` | Output |
 | **SPI data in** | E1 `exp_p_io[1]` (H16) | `DOUT1` | Input, TDM stream CH1..CH8 |
 | **ADC Clock** | E1 `exp_p_io[4]` (L14) | `EXTCLK` | Output, clock ADC conversion |
+| **Modulation output** | E1 `exp_p_io[5]` (L16) | External modulator input | Output, 10 Hz default square wave |
 | **Ground** | RP `GND` | EVM `GND` | Common reference |
 | **DRDY event** | E1 `exp_p_io[2]` (J18) | /`DRDY_FSYNC` | Input, falling-edge trigger |
 | **SYNC control** | E1 `exp_p_io[3]` (K17) | /`SYNC` | Output, active-low reset pulse |
@@ -54,6 +55,7 @@ No Linux sysfs GPIOs are used for high-speed acquisition.
 | DRDY | `exp_p_io[2]` | J18 | Input |
 | SYNC | `exp_p_io[3]` | K17 | Output |
 | EXTCLK | `exp_p_io[4]` | L14 | Output |
+| MOD | `exp_p_io[5]` | L16 | Output |
 
 ## Clocking and data rate
 
@@ -70,3 +72,5 @@ Some examples:
 | 27 MHz | 52,734.4 Hz |
 
 The `EXTCLK` input on the ADS1278EVM is an SMA connector. It is awkward to connect an RP GPIO pin to an SMA connector, but we will try it.
+
+The `MOD` output is a 3.3 V LVCMOS square wave generated in FPGA logic. It defaults to `10 Hz` and is controlled by the client through the server protocol by writing the `MOD_DIV` register.

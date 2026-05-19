@@ -30,12 +30,14 @@ Current server-visible register map:
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
 | `0x24` | `CTRL` | R/W | Bit `0` = one-shot `SYNC` trigger, bit `1` = acquisition enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared divider value used by current FPGA clocking logic |
+| `0x2C` | `MOD_DIV` | R/W | Modulation square-wave half-period divider |
 
 Current behavior a server can rely on:
 
 - The register block is word-oriented and uses 32-bit reads and writes.
 - `CTRL` resets to `0`, so acquisition starts disabled after reset.
 - `EXTCLK_DIV` resets to `625` (`0x271`).
+- `MOD_DIV` resets to `6,250,000`, which generates a nominal `10 Hz` square wave.
 - Channel registers update together after a complete 192-bit TDM frame is captured.
 - `frame_cnt` increments once per latched frame and resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
@@ -65,12 +67,12 @@ The MMIO contract is implemented by `ads1278_axi_slave`, which is connected to t
 Ownership and data flow are:
 
 1. The PS accesses the FPGA over AXI4-Lite through the shared `axi4_lite_if` bus.
-2. `ads1278_axi_slave` decodes reads and writes for `CTRL`, `EXTCLK_DIV`, channel data, and `STATUS`.
+2. `ads1278_axi_slave` decodes reads and writes for `CTRL`, `EXTCLK_DIV`, `MOD_DIV`, channel data, and `STATUS`.
 3. `ads1278_axi_slave` forwards control values into `ads1278_acq_top`.
 4. `ads1278_acq_top` returns:
    - eight 32-bit channel words
    - one packed `status` word
-5. `ads1278_axi_slave` exposes those values directly to software and forwards `status[0]` to `irq`.
+5. `ads1278_axi_slave` exposes those values directly to software, forwards `status[0]` to `irq`, and generates the `MOD` square wave from `MOD_DIV`.
 
 The packed status word is currently:
 
@@ -100,7 +102,7 @@ That means the server contract is intentionally simple today:
 Useful checks for the current server bring-up path:
 
 - Map `0x42000000` for `0x1000` bytes and confirm reads do not bus-fault on a correctly loaded design.
-- Read `CTRL`, `EXTCLK_DIV`, and `STATUS` before enabling acquisition to confirm reset-state expectations.
+- Read `CTRL`, `EXTCLK_DIV`, `MOD_DIV`, and `STATUS` before enabling acquisition to confirm reset-state expectations.
 - Write `CTRL[1] = 1` and confirm `EXTCLK` and acquisition-related behavior begin.
 - Read `frame_cnt` repeatedly and confirm it advances during successful acquisition.
 - Trigger `SYNC` through `CTRL[0]` and observe the expected acquisition disturbance or recovery behavior.

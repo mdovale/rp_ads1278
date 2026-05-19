@@ -33,6 +33,7 @@ static void ads1278_snapshot_read_once(
     }
     snapshot->ctrl_raw = ads1278_mmio_read32(mmio, ADS1278_REG_CTRL);
     snapshot->extclk_div = ads1278_mmio_read32(mmio, ADS1278_REG_EXTCLK_DIV);
+    snapshot->mod_div = ads1278_mmio_read32(mmio, ADS1278_REG_MOD_DIV);
     *status_after = ads1278_mmio_read32(mmio, ADS1278_REG_STATUS);
     snapshot->status_raw = *status_after;
     snapshot->frame_cnt = ads1278_status_frame_count(*status_after);

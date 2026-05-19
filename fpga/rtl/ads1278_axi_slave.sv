@@ -14,6 +14,7 @@
 //   0x20  STATUS    R    [0] drdy_seen  [1] overflow  [31:16] frame_cnt
 //   0x24  CTRL      R/W  [0] sync_trigger (W1C)  [1] enable
 //   0x28  EXTCLK_DIV R/W half-period in sys-clk cycles (125 MHz / (2*val))
+//   0x2C  MOD_DIV    R/W half-period in sys-clk cycles (default 10 Hz)
 ////////////////////////////////////////////////////////////////////////////////
 
 module ads1278_axi_slave #(
@@ -25,10 +26,13 @@ module ads1278_axi_slave #(
   input  logic        drdy_n_i,
   output logic        sync_n_o,
   output logic        extclk_o,
+  output logic        mod_o,
   output logic [7:0]  led_o,
   output logic        irq,
   axi4_lite_if.s      bus
 );
+
+localparam logic [DW-1:0] MOD_DIV_DEFAULT = 32'd6_250_000; // 125 MHz / (2 * 10 Hz)
 
 localparam int unsigned ADDR_LSB = $clog2(DW/8);
 localparam int unsigned REG_AW   = AW - ADDR_LSB;    // 4-bit word address
@@ -50,6 +54,7 @@ assign  Rtransfer =  bus.RVALID &  bus.RREADY;
 // ---- Registers ----
 logic [DW-1:0] ctrl_reg;
 logic [DW-1:0] extclk_div_reg;
+logic [DW-1:0] mod_div_reg;
 
 // Derived control signals
 logic ctrl_enable;
@@ -84,6 +89,24 @@ ads1278_acq_top u_acq (
   .extclk_div   (extclk_div_reg)
 );
 
+// ---- Modulation square wave ----
+// MOD_DIV is a half-period divider in the same 125 MHz bus clock domain.
+logic [DW-1:0] mod_cnt;
+wire [DW-1:0] mod_div_eff = (mod_div_reg < 32'd2) ? 32'd2 : mod_div_reg;
+
+always_ff @(posedge bus.ACLK)
+if (~bus.ARESETn) begin
+  mod_cnt <= '0;
+  mod_o   <= 1'b0;
+end else begin
+  if (mod_cnt >= mod_div_eff - 32'd1) begin
+    mod_cnt <= '0;
+    mod_o   <= ~mod_o;
+  end else begin
+    mod_cnt <= mod_cnt + 32'd1;
+  end
+end
+
 // LED: frame counter toggle on bit 0, enable on bit 1, EXTCLK on bit 2
 assign led_o = {status_reg[20:16], extclk_o, ctrl_enable, status_reg[0]};
 
@@ -114,6 +137,7 @@ always_ff @(posedge bus.ACLK)
 if (~bus.ARESETn) begin
   ctrl_reg       <= 32'h0000_0000;
   extclk_div_reg <= 32'h0000_0271;   // default 625 → 100 kHz EXTCLK
+  mod_div_reg    <= MOD_DIV_DEFAULT;
 end else begin
   // Auto-clear SYNC trigger after one cycle
   ctrl_reg[0] <= 1'b0;
@@ -127,6 +151,10 @@ end else begin
       4'hA: begin // EXTCLK_DIV @ 0x28
         for (int unsigned i = 0; i < (DW/8); i++)
           if (bus.WSTRB[i]) extclk_div_reg[(i*8)+:8] <= bus.WDATA[(i*8)+:8];
+      end
+      4'hB: begin // MOD_DIV @ 0x2C
+        for (int unsigned i = 0; i < (DW/8); i++)
+          if (bus.WSTRB[i]) mod_div_reg[(i*8)+:8] <= bus.WDATA[(i*8)+:8];
       end
       default: ;
     endcase
@@ -184,6 +212,7 @@ if (slv_reg_rden) begin
     4'h8: bus.RDATA <= status_reg;
     4'h9: bus.RDATA <= ctrl_reg;
     4'hA: bus.RDATA <= extclk_div_reg;
+    4'hB: bus.RDATA <= mod_div_reg;
     default: bus.RDATA <= 32'hDEAD_BEEF;
   endcase
 end

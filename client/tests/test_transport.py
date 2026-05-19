@@ -22,6 +22,7 @@ def test_transport_connects_reads_messages_and_sends_commands() -> None:
         0x00010001,
         0x00000000,
         625,
+        6_250_000,
         [1, 2, 3, 4, 5, 6, 7, 8],
     )
     ack = build_message(
@@ -32,6 +33,7 @@ def test_transport_connects_reads_messages_and_sends_commands() -> None:
         0x00020001,
         0x00000002,
         625,
+        6_250_000,
         [11, 12, 13, 14, 15, 16, 17, 18],
     )
 

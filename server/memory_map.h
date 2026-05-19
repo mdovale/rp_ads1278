@@ -23,7 +23,8 @@ enum {
     ADS1278_REG_CH8 = 0x1c,
     ADS1278_REG_STATUS = 0x20,
     ADS1278_REG_CTRL = 0x24,
-    ADS1278_REG_EXTCLK_DIV = 0x28
+    ADS1278_REG_EXTCLK_DIV = 0x28,
+    ADS1278_REG_MOD_DIV = 0x2c
 };
 
 enum {
@@ -41,6 +42,7 @@ typedef struct {
     uint32_t status_raw;
     uint32_t ctrl_raw;
     uint32_t extclk_div;
+    uint32_t mod_div;
     int32_t channels[ADS1278_CHANNEL_COUNT];
     uint16_t frame_cnt;
 } ads1278_snapshot;

@@ -17,6 +17,7 @@ def test_csv_logger_writes_header_and_sample_row(tmp_path) -> None:
             0x00110001,
             0x00000002,
             625,
+            6_250_000,
             [1, -2, 3, -4, 5, -6, 7, -8],
         )
     )
@@ -30,8 +31,8 @@ def test_csv_logger_writes_header_and_sample_row(tmp_path) -> None:
         rows = list(csv.reader(handle))
 
     assert rows[0] == SampleCsvLogger.HEADER
-    assert rows[1][1:6] == ["77", "17", "1114113", "2", "625"]
-    assert rows[1][6:] == ["1", "-2", "3", "-4", "5", "-6", "7", "-8"]
+    assert rows[1][1:7] == ["77", "17", "1114113", "2", "625", "6250000"]
+    assert rows[1][7:] == ["1", "-2", "3", "-4", "5", "-6", "7", "-8"]
 
 
 def test_csv_logger_rejects_non_sample_messages(tmp_path) -> None:
@@ -44,6 +45,7 @@ def test_csv_logger_rejects_non_sample_messages(tmp_path) -> None:
             0,
             0,
             625,
+            6_250_000,
             [0, 0, 0, 0, 0, 0, 0, 0],
         )
     )

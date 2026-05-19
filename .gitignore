@@ -32,6 +32,9 @@ client/*.egg-info/
 client/**/__pycache__/
 client/**/*.py[cod]
 
+# Local acquisition logs and analysis artifacts (not part of the repo)
+logged_files/
+
 # Misc files
 *.pdf
 *.csv

@@ -8,7 +8,14 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .controller import ClientController
-from .protocol import MIN_EXTCLK_DIV, SERVER_PORT
+from .protocol import (
+    DEFAULT_MODULATION_FREQUENCY_HZ,
+    MIN_EXTCLK_DIV,
+    MAX_MODULATION_FREQUENCY_HZ,
+    MIN_MODULATION_FREQUENCY_HZ,
+    SERVER_PORT,
+    modulation_divider_to_frequency_hz,
+)
 from .units import (
     DEFAULT_ADC_REFERENCE_VOLTS,
     frame_counts_to_relative_seconds,
@@ -83,12 +90,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.enabled_label = QtWidgets.QLabel("enabled: -")
         self.overflow_label = QtWidgets.QLabel("overflow: -")
         self.divider_label = QtWidgets.QLabel("divider: -")
+        self.modulation_label = QtWidgets.QLabel("mod: -")
         for label in (
             self.frame_count_label,
             self.msg_seq_label,
             self.enabled_label,
             self.overflow_label,
             self.divider_label,
+            self.modulation_label,
         ):
             layout.addWidget(label)
 
@@ -128,6 +137,28 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         )
         layout.addWidget(self.set_divider_button)
+
+        layout.addSpacing(16)
+        layout.addWidget(QtWidgets.QLabel("MOD freq"))
+        self.modulation_frequency_input = QtWidgets.QDoubleSpinBox()
+        self.modulation_frequency_input.setRange(
+            MIN_MODULATION_FREQUENCY_HZ,
+            MAX_MODULATION_FREQUENCY_HZ,
+        )
+        self.modulation_frequency_input.setDecimals(3)
+        self.modulation_frequency_input.setSingleStep(1.0)
+        self.modulation_frequency_input.setSuffix(" Hz")
+        self.modulation_frequency_input.setValue(DEFAULT_MODULATION_FREQUENCY_HZ)
+        layout.addWidget(self.modulation_frequency_input)
+
+        self.set_modulation_button = QtWidgets.QPushButton("Set MOD")
+        self.set_modulation_button.clicked.connect(
+            lambda: self._send_command(
+                self._controller.set_modulation_frequency,
+                self.modulation_frequency_input.value(),
+            )
+        )
+        layout.addWidget(self.set_modulation_button)
 
         layout.addSpacing(16)
         self.start_logging_button = QtWidgets.QPushButton("Start CSV")
@@ -256,14 +287,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.enabled_label.setText("enabled: -")
             self.overflow_label.setText("overflow: -")
             self.divider_label.setText("divider: -")
+            self.modulation_label.setText("mod: -")
         else:
+            modulation_frequency_hz = modulation_divider_to_frequency_hz(latest.mod_div)
             self.frame_count_label.setText(f"frame_cnt: {latest.frame_cnt}")
             self.msg_seq_label.setText(f"msg_seq: {latest.msg_seq}")
             self.enabled_label.setText(f"enabled: {'yes' if latest.enabled else 'no'}")
             self.overflow_label.setText(f"overflow: {'yes' if latest.overflow else 'no'}")
             self.divider_label.setText(f"divider: {latest.extclk_div}")
+            self.modulation_label.setText(f"mod: {modulation_frequency_hz:.3f} Hz")
             if snapshot.connected and not self.divider_input.hasFocus():
                 self.divider_input.setValue(latest.extclk_div)
+            if snapshot.connected and not self.modulation_frequency_input.hasFocus():
+                self.modulation_frequency_input.setValue(modulation_frequency_hz)
 
         self.capability_label.setText(
             f"capability: {snapshot.capability_line or '-'}"
@@ -280,6 +316,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.disable_button,
             self.sync_button,
             self.set_divider_button,
+            self.set_modulation_button,
             self.start_logging_button,
             self.stop_logging_button,
         ):
