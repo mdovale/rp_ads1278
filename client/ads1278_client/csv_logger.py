@@ -16,6 +16,7 @@ class SampleCsvLogger:
         "status_raw",
         "ctrl_raw",
         "extclk_div",
+        "mod_div",
         "ch1",
         "ch2",
         "ch3",
@@ -45,6 +46,7 @@ class SampleCsvLogger:
             message.status_raw,
             message.ctrl_raw,
             message.extclk_div,
+            message.mod_div,
             *message.channels,
         ]
         self._writer.writerow(row)

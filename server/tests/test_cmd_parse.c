@@ -83,6 +83,18 @@ static void test_mark_capture_acceptance(void)
     assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
 }
 
+static void test_modulation_divider_validation(void)
+{
+    ads1278_command command;
+
+    command.opcode = ADS1278_OPCODE_SET_MOD_DIV;
+    command.value = 6250000u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+
+    command.value = 1u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_ERR_INVALID_MOD_DIV);
+}
+
 int main(void)
 {
     test_partial_reads();
@@ -90,5 +102,6 @@ int main(void)
     test_invalid_opcode_rejection();
     test_invalid_divider_rejection();
     test_mark_capture_acceptance();
+    test_modulation_divider_validation();
     return 0;
 }

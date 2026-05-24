@@ -384,6 +384,7 @@ static void ads1278_fill_message(
     message->status_raw = state->snapshot.status_raw;
     message->ctrl_raw = state->snapshot.ctrl_raw;
     message->extclk_div = state->snapshot.extclk_div;
+    message->mod_div = state->snapshot.mod_div;
     for (channel = 0; channel < ADS1278_CHANNEL_COUNT; ++channel) {
         message->channels[channel] = state->snapshot.channels[channel];
     }
@@ -439,6 +440,9 @@ static void ads1278_apply_command(
         break;
     case ADS1278_OPCODE_SET_EXTCLK_DIV:
         ads1278_mmio_write32(&state->mmio, ADS1278_REG_EXTCLK_DIV, command->value);
+        break;
+    case ADS1278_OPCODE_SET_MOD_DIV:
+        ads1278_mmio_write32(&state->mmio, ADS1278_REG_MOD_DIV, command->value);
         break;
     case ADS1278_OPCODE_MARK_CAPTURE:
         /* ACK establishes an ordered capture boundary on the TCP stream. */

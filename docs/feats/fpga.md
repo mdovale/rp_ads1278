@@ -22,7 +22,7 @@ The current repository now has in-tree implementation for `fpga/`, `server/`, an
 
 At a high level, the FPGA layer does four things today:
 
-1. Drives the external ADS1278 signals on the Red Pitaya E1 expansion connector.
+1. Drives the external ADS1278 and modulation signals on the Red Pitaya E1 expansion connector.
 2. Generates `EXTCLK` and `SYNC`, and clocks in the ADS1278 TDM stream on `DOUT1`.
 3. Latches eight 24-bit channels, stages fixed-size DMA records in a PL FIFO, and packs acquisition state into a small AXI4-Lite register block.
 4. Exposes that register block to the PS over AXI GP0 so the current `server/` can read and control the design.
@@ -41,9 +41,9 @@ What is implemented today:
 
 | Area | Current behavior |
 |------|------|
-| Board IO | Uses E1 `exp_p_io[0:4]` for `SCLK`, `DOUT1`, `DRDY`, `SYNC`, and `EXTCLK` |
+| Board IO | Uses E1 `exp_p_io[0:5]` for `SCLK`, `DOUT1`, `DRDY`, `SYNC`, `EXTCLK`, and `MOD` |
 | Acquisition | Waits for `DRDY`, delays, clocks in 192 bits, latches CH1..CH8, updates `STATUS`, and queues frames in a staged FIFO |
-| Control | Software can enable acquisition, trigger `SYNC`, and set `EXTCLK_DIV` |
+| Control | Software can enable acquisition, trigger `SYNC`, set `EXTCLK_DIV`, and set `MOD_DIV` |
 | Register access | PS reads and writes a small AXI4-Lite aperture at `0x42000000` |
 | Build/deploy | Repo scripts generate the project, build a bitstream, and deploy a `.bit.bin` to Red Pitaya OS 2.x+ |
 

@@ -4,7 +4,7 @@ This doc covers the current MMIO register block exposed by the FPGA acquisition 
 
 ## Goal
 
-Define the current register-level behavior that software can rely on when reading samples, enabling acquisition, triggering `SYNC`, and configuring the shared clock divider.
+Define the current register-level behavior that software can rely on when reading samples, enabling acquisition, triggering `SYNC`, configuring the shared clock divider, and configuring the modulation output divider.
 
 ## Scope
 
@@ -33,6 +33,16 @@ The current register map is:
 | `0x2C` | `FIFO_STATUS` | R | Bits `[15:0]` = FIFO level in frames, bit `16` = empty, bit `17` = full |
 | `0x30` | `FIFO_DROPS` | R | Count of queued DMA frames dropped because the staged FIFO was full |
 | `0x34` | `FIFO_CAPACITY` | R | Configured staged FIFO depth in frames (`64`) |
+| `0x38` | `DMA_CTRL` | R/W | Bit `0` = DMA enable, bits `[2:1]` = DMA mode, bit `8` = IRQ enable |
+| `0x3C` | `DMA_BASE_ADDR` | R/W | Physical DDR base for the DMA test buffer |
+| `0x40` | `DMA_BUF_SIZE` | R/W | DMA buffer size in bytes, aligned to 128-byte bursts |
+| `0x44` | `DMA_STATUS` | R | DMA enabled/running/error status and current write index |
+| `0x48` | `DMA_WRITE_INDEX` | R | Current DMA writer burst index |
+| `0x4C` | `DMA_WRAP_COUNT` | R | Number of completed buffer wraps |
+| `0x50` | `DMA_ERROR_COUNT` | R | Number of non-OKAY AXI write responses |
+| `0x54` | `DMA_IRQ_STATUS` | R | Sticky DMA interrupt/status bits |
+| `0x58` | `DMA_IRQ_ACK` | W1C | Clear `DMA_IRQ_STATUS` bits |
+| `0x5C` | `MOD_DIV` | R/W | Modulation square-wave half-period divider, `125 MHz / (2 * MOD_DIV)` |
 
 Current read and write semantics:
 
@@ -44,6 +54,7 @@ Current read and write semantics:
 - `FIFO_STATUS` reports staged DMA FIFO occupancy for bring-up and debug without changing the legacy MMIO latest-sample path.
 - `FIFO_DROPS` resets to `0` when acquisition is disabled.
 - `FIFO_CAPACITY` is a read-only constant for software-visible bring-up checks.
+- `MOD_DIV` resets to `6,250,000`, which corresponds to a nominal `10 Hz` modulation square wave from a `125 MHz` input clock.
 
 Important current caveats:
 
@@ -59,9 +70,11 @@ The register block is implemented in `ads1278_axi_slave`, which is the AXI4-Lite
 Control and data flow are:
 
 1. The PS issues AXI4-Lite reads and writes through the shared `axi4_lite_if` bus.
-2. `ads1278_axi_slave` decodes register accesses and exposes two control registers:
+2. `ads1278_axi_slave` decodes register accesses and exposes control registers:
    - `ctrl_reg`
    - `extclk_div_reg`
+   - `mod_div_reg`
+   - DMA phase-4 control registers
 3. Those control signals feed `ads1278_acq_top`, which owns the acquisition datapath.
 4. `ads1278_acq_top` instantiates:
    - `ads1278_frame_fifo` for staged DMA buffering
@@ -73,11 +86,13 @@ Control and data flow are:
    - a packed `status` word
    - staged FIFO debug words
 6. `ads1278_axi_slave` exposes those values through the read mux and forwards `status[0]` as `irq`.
+7. `ads1278_axi_slave` also generates the modulation square wave directly from `mod_div_reg` and exposes it to `red_pitaya_top.sv` for `exp_p_io[5]`.
 
 Reset and lifecycle notes:
 
 - `CTRL` resets to `0`, so acquisition starts disabled.
 - `EXTCLK_DIV` resets to `625`.
+- `MOD_DIV` resets to `6,250,000`, so the modulation output starts at `10 Hz`.
 - `frame_cnt` resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
 - The channel registers update only when a full 192-bit frame is captured and latched.

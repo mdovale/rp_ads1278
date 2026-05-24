@@ -38,7 +38,8 @@ enum {
     ADS1278_REG_DMA_WRAP_COUNT = 0x4c,
     ADS1278_REG_DMA_ERROR_COUNT = 0x50,
     ADS1278_REG_DMA_IRQ_STATUS = 0x54,
-    ADS1278_REG_DMA_IRQ_ACK = 0x58
+    ADS1278_REG_DMA_IRQ_ACK = 0x58,
+    ADS1278_REG_MOD_DIV = 0x5c
 };
 
 enum {
@@ -85,6 +86,7 @@ typedef struct {
     uint32_t status_raw;
     uint32_t ctrl_raw;
     uint32_t extclk_div;
+    uint32_t mod_div;
     int32_t channels[ADS1278_CHANNEL_COUNT];
     uint16_t frame_cnt;
 } ads1278_snapshot;

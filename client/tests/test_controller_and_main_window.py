@@ -13,6 +13,12 @@ from ads1278_client.controller import ClientController, ControllerSnapshot
 from ads1278_client.main_window import MainWindow
 from ads1278_client.models import Ads1278Message, CommandOpcode, MessageType
 from ads1278_client.protocol import SERVER_PORT, pack_mark_capture
+from ads1278_client.units import (
+    frame_counts_to_relative_seconds,
+    raw_codes_to_volts,
+    sample_indices_to_relative_seconds,
+    sample_period_seconds,
+)
 
 
 def _message(
@@ -24,6 +30,7 @@ def _message(
     status_raw: int = 0x00010001,
     ctrl_raw: int = 0x00000002,
     extclk_div: int = 625,
+    mod_div: int = 6_250_000,
 ) -> Ads1278Message:
     return Ads1278Message(
         msg_type=msg_type,
@@ -33,12 +40,36 @@ def _message(
         status_raw=status_raw,
         ctrl_raw=ctrl_raw,
         extclk_div=extclk_div,
+        mod_div=mod_div,
         channels=(1, 2, 3, 4, 5, 6, 7, 8),
     )
 
 
 def _empty_history() -> list[np.ndarray]:
     return [np.asarray([], dtype=np.int32) for _ in range(8)]
+
+
+def _empty_frame_history() -> np.ndarray:
+    return np.asarray([], dtype=np.int32)
+
+
+def test_unit_helpers_convert_adc_codes_and_frame_counts() -> None:
+    samples = np.asarray([-(1 << 23), 0, 1 << 22], dtype=np.int32)
+    volts = raw_codes_to_volts(samples, reference_volts=2.5)
+
+    assert np.allclose(volts, [-2.5, 0.0, 1.25])
+    assert np.isclose(sample_period_seconds(625), 0.00512)
+    assert np.allclose(
+        frame_counts_to_relative_seconds(
+            np.asarray([65534, 65535, 0], dtype=np.int32),
+            extclk_div=625,
+        ),
+        [-0.01024, -0.00512, 0.0],
+    )
+    assert np.allclose(
+        sample_indices_to_relative_seconds(3, extclk_div=625),
+        [-0.01024, -0.00512, 0.0],
+    )
 
 
 def test_controller_clears_latest_message_on_disconnect() -> None:
@@ -82,7 +113,7 @@ def test_controller_starts_csv_only_after_capture_marker_ack(
     monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
 
     controller = ClientController()
-    controller._handle_connected("RP_CAP:ads1278_v1")
+    controller._handle_connected("RP_CAP:ads1278_v2")
 
     path = tmp_path / "capture.csv"
     controller.start_logging(path)
@@ -134,7 +165,7 @@ def test_controller_ignores_stale_capture_marker_ack(monkeypatch, tmp_path) -> N
     monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
 
     controller = ClientController()
-    controller._handle_connected("RP_CAP:ads1278_v1")
+    controller._handle_connected("RP_CAP:ads1278_v2")
 
     first_path = tmp_path / "first.csv"
     second_path = tmp_path / "second.csv"
@@ -182,12 +213,13 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
         connected=True,
         host="127.0.0.1",
         port=SERVER_PORT,
-        capability_line="RP_CAP:ads1278_v1",
+        capability_line="RP_CAP:ads1278_v2",
         latest_message=_message(extclk_div=625),
         status_text="Connected",
         status_level="ok",
         logging_path="",
         channel_history=_empty_history(),
+        frame_history=_empty_frame_history(),
     )
 
     class FakeController:
@@ -207,6 +239,9 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
             return None
 
         def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
             return None
 
         def start_logging(self, path: str) -> None:

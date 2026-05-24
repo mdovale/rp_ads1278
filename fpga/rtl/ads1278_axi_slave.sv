@@ -28,17 +28,19 @@
 //   0x50  DMA_ERROR_COUNT R Number of non-OKAY AXI write responses
 //   0x54  DMA_IRQ_STATUS R Sticky DMA interrupt/status bits
 //   0x58  DMA_IRQ_ACK W1C Clear DMA_IRQ_STATUS bits
+//   0x5C  MOD_DIV    R/W half-period in sys-clk cycles (default 10 Hz)
 ////////////////////////////////////////////////////////////////////////////////
 
 module ads1278_axi_slave #(
   int unsigned DW = 32,
-  int unsigned AW = 6
+  int unsigned AW = 7
 )(
   output logic        sclk_o,
   input  logic        miso_i,
   input  logic        drdy_n_i,
   output logic        sync_n_o,
   output logic        extclk_o,
+  output logic        mod_o,
   output logic [7:0]  led_o,
   output logic        irq,
   output logic        dma_phase4_enable,
@@ -53,6 +55,8 @@ module ads1278_axi_slave #(
   input  logic [1:0]  dma_phase4_last_bresp,
   axi4_lite_if.s      bus
 );
+
+localparam logic [DW-1:0] MOD_DIV_DEFAULT = 32'd6_250_000; // 125 MHz / (2 * 10 Hz)
 
 localparam int unsigned ADDR_LSB = $clog2(DW/8);
 localparam int unsigned REG_AW   = AW - ADDR_LSB;
@@ -80,6 +84,7 @@ localparam int unsigned REG_DMA_WRAPS    = 'h13;
 localparam int unsigned REG_DMA_ERRORS   = 'h14;
 localparam int unsigned REG_DMA_IRQ_STAT = 'h15;
 localparam int unsigned REG_DMA_IRQ_ACK  = 'h16;
+localparam int unsigned REG_MOD_DIV      = 'h17;
 
 // AXI latched addresses
 logic [AW-1:ADDR_LSB] axi_awaddr;
@@ -107,6 +112,7 @@ logic [DW-1:0] dma_irq_status_reg;
 logic [DW-1:0] dma_status_reg;
 logic [DW-1:0] dma_write_index_reg;
 logic [DW-1:0] dma_irq_ack_mask;
+logic [DW-1:0] mod_div_reg;
 
 // Derived control signals
 logic ctrl_enable;
@@ -177,6 +183,24 @@ ads1278_acq_top u_acq (
   .extclk_div   (extclk_div_reg)
 );
 
+// ---- Modulation square wave ----
+// MOD_DIV is a half-period divider in the same 125 MHz bus clock domain.
+logic [DW-1:0] mod_cnt;
+wire [DW-1:0] mod_div_eff = (mod_div_reg < 32'd2) ? 32'd2 : mod_div_reg;
+
+always_ff @(posedge bus.ACLK)
+if (~bus.ARESETn) begin
+  mod_cnt <= '0;
+  mod_o   <= 1'b0;
+end else begin
+  if (mod_cnt >= mod_div_eff - 32'd1) begin
+    mod_cnt <= '0;
+    mod_o   <= ~mod_o;
+  end else begin
+    mod_cnt <= mod_cnt + 32'd1;
+  end
+end
+
 // LED: frame counter toggle on bit 0, enable on bit 1, EXTCLK on bit 2
 assign led_o = {status_reg[20:16], extclk_o, ctrl_enable, status_reg[0]};
 
@@ -210,6 +234,7 @@ if (~bus.ARESETn) begin
   dma_ctrl_reg      <= 32'h0000_0000;
   dma_base_addr_reg <= 32'h1E00_0000;
   dma_buf_size_reg  <= 32'h0001_0000;
+  mod_div_reg    <= MOD_DIV_DEFAULT;
 end else begin
   // Auto-clear SYNC trigger after one cycle
   ctrl_reg[0] <= 1'b0;
@@ -235,6 +260,10 @@ end else begin
       REG_DMA_SIZE: begin
         for (int unsigned i = 0; i < (DW/8); i++)
           if (bus.WSTRB[i]) dma_buf_size_reg[(i*8)+:8] <= bus.WDATA[(i*8)+:8];
+      end
+      REG_MOD_DIV: begin // MOD_DIV @ 0x5C
+        for (int unsigned i = 0; i < (DW/8); i++)
+          if (bus.WSTRB[i]) mod_div_reg[(i*8)+:8] <= bus.WDATA[(i*8)+:8];
       end
       default: ;
     endcase
@@ -327,6 +356,7 @@ if (slv_reg_rden) begin
     REG_DMA_ERRORS: bus.RDATA <= dma_error_count_reg;
     REG_DMA_IRQ_STAT: bus.RDATA <= dma_irq_status_reg;
     REG_DMA_IRQ_ACK: bus.RDATA <= 32'h0000_0000;
+    REG_MOD_DIV: bus.RDATA <= mod_div_reg;
     default: bus.RDATA <= 32'hDEAD_BEEF;
   endcase
 end

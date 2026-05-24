@@ -9,9 +9,12 @@ from ads1278_client.protocol import (
     MessageStreamBuffer,
     MIN_EXTCLK_DIV,
     build_message,
+    modulation_divider_to_frequency_hz,
+    modulation_frequency_to_divider,
     pack_mark_capture,
     pack_set_enable,
     pack_set_extclk_div,
+    pack_set_modulation_frequency,
     pack_trigger_sync,
     parse_message,
 )
@@ -20,7 +23,7 @@ from ads1278_client.protocol import (
 def test_capability_buffer_accepts_split_reads() -> None:
     buffer = CapabilityLineBuffer()
     assert buffer.feed(b"RP_CAP:ads") is None
-    assert buffer.feed(b"1278_v1\n") == CAPABILITY_LINE
+    assert buffer.feed(b"1278_v2\n") == CAPABILITY_LINE
     assert buffer.take_remainder() == b""
 
 
@@ -34,6 +37,7 @@ def test_capability_buffer_preserves_binary_remainder() -> None:
         0x00120003,
         0x00000002,
         625,
+        6_250_000,
         [1, 2, 3, 4, 5, 6, 7, 8],
     )
     combined = f"{CAPABILITY_LINE}\n".encode("ascii") + payload[:10]
@@ -56,6 +60,7 @@ def test_message_stream_buffer_handles_split_messages() -> None:
         0x00340001,
         0x00000002,
         625,
+        6_250_000,
         [10, 11, 12, 13, 14, 15, 16, 17],
     )
     ack = build_message(
@@ -66,6 +71,7 @@ def test_message_stream_buffer_handles_split_messages() -> None:
         0x00350001,
         0x00000002,
         625,
+        6_250_000,
         [20, 21, 22, 23, 24, 25, 26, 27],
     )
 
@@ -90,6 +96,7 @@ def test_parse_message_decodes_negative_channels_and_frame_count() -> None:
         0xABCD0003,
         0x00000002,
         625,
+        6_250_000,
         [-1, -2, 3, 4, 5, 6, 7, -8],
     )
     message = parse_message(payload)
@@ -98,6 +105,7 @@ def test_parse_message_decodes_negative_channels_and_frame_count() -> None:
     assert message.new_data is True
     assert message.overflow is True
     assert message.enabled is True
+    assert message.mod_div == 6_250_000
     assert message.channels[0] == -1
     assert message.channels[-1] == -8
 
@@ -119,7 +127,16 @@ def test_command_packers_match_server_layout() -> None:
     assert div_opcode == CommandOpcode.SET_EXTCLK_DIV
     assert div_value == 625
 
+    mod_opcode, mod_value = struct.unpack("<II", pack_set_modulation_frequency(10.0))
+    assert mod_opcode == CommandOpcode.SET_MOD_DIV
+    assert mod_value == 6_250_000
+
 
 def test_extclk_divider_below_server_minimum_rejected() -> None:
     with pytest.raises(ValueError, match=f">= {MIN_EXTCLK_DIV}"):
         pack_set_extclk_div(MIN_EXTCLK_DIV - 1)
+
+
+def test_modulation_frequency_conversion_uses_125_mhz_half_period() -> None:
+    assert modulation_frequency_to_divider(10.0) == 6_250_000
+    assert modulation_divider_to_frequency_hz(6_250_000) == 10.0

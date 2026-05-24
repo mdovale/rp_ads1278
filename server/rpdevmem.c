@@ -43,6 +43,7 @@ static void print_snapshot(const ads1278_snapshot *snapshot)
     printf("status_raw  : 0x%08x\n", snapshot->status_raw);
     printf("ctrl_raw    : 0x%08x\n", snapshot->ctrl_raw);
     printf("extclk_div  : %u\n", snapshot->extclk_div);
+    printf("mod_div     : %u\n", snapshot->mod_div);
     printf("frame_cnt   : %u\n", (unsigned int)snapshot->frame_cnt);
     printf("new_data    : %u\n", ads1278_status_new_data(snapshot->status_raw) ? 1u : 0u);
     printf("overflow    : %u\n", ads1278_status_overflow(snapshot->status_raw) ? 1u : 0u);

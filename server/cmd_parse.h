@@ -15,7 +15,8 @@ typedef enum {
     ADS1278_CMD_VALID = 0,
     ADS1278_CMD_ERR_UNKNOWN_OPCODE,
     ADS1278_CMD_ERR_INVALID_ENABLE_VALUE,
-    ADS1278_CMD_ERR_INVALID_EXTCLK_DIV
+    ADS1278_CMD_ERR_INVALID_EXTCLK_DIV,
+    ADS1278_CMD_ERR_INVALID_MOD_DIV
 } ads1278_cmd_validation_result;
 
 void ads1278_cmd_parser_init(ads1278_cmd_parser *parser);

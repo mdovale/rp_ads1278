@@ -10,6 +10,7 @@ class CommandOpcode(IntEnum):
     TRIGGER_SYNC = 2
     SET_EXTCLK_DIV = 3
     MARK_CAPTURE = 4
+    SET_MOD_DIV = 5
 
 
 class MessageType(IntEnum):
@@ -27,6 +28,7 @@ class Ads1278Message:
     status_raw: int
     ctrl_raw: int
     extclk_div: int
+    mod_div: int
     channels: Tuple[int, ...]
 
     @property

@@ -28,7 +28,7 @@ Current runtime behavior is:
 - The binary is `server/server` locally and is deployed as `ads1278-server`.
 - The process maps `0x42000000` for `0x1000` bytes through `/dev/mem`.
 - The listener accepts one TCP client at a time on port `5000`.
-- On connect, the server sends `RP_CAP:ads1278_v1\n`, then one initial `SAMPLE` message built from the latest coherent snapshot.
+- On connect, the server sends `RP_CAP:ads1278_v2\n`, then one initial `SAMPLE` message built from the latest coherent snapshot.
 - While a client is connected, the server schedules MMIO checks from the current `EXTCLK_DIV` so the wake cadence targets about `2 * f_data`, capped by the configured `--poll-ms` maximum wait, and emits a new `SAMPLE` only when `frame_cnt` changes.
 - Valid commands are applied immediately and answered with an `ACK`.
 - Invalid commands are answered with an `ERROR`.
@@ -49,13 +49,13 @@ The current server is intentionally split into a few small files:
 1. `server.c` owns process startup, signal handling, the one-client accept loop, socket I/O, MMIO writes for commands, and `SAMPLE`/`ACK`/`ERROR` emission.
 2. `memory_map.c` owns `/dev/mem` mapping, register offsets, 32-bit access helpers, 24-bit sign extension, and coherent snapshot reads keyed on `frame_cnt`.
 3. `cmd_parse.c` owns partial socket buffering and fixed 8-byte command assembly plus opcode/value validation.
-4. `protocol.h` owns the fixed 8-byte command shape, the fixed 60-byte message shape, and protocol constants such as the capability line, port, and opcodes.
+4. `protocol.h` owns the fixed 8-byte command shape, the fixed 64-byte message shape, and protocol constants such as the capability line, port, and opcodes.
 5. `tests/` holds focused unit checks for command parsing and message layout so the protocol cannot drift silently.
 
 The snapshot flow matches the current RTL contract:
 
 1. Read `STATUS` before the channel bank.
-2. Read `CH1` through `CH8`, `CTRL`, and `EXTCLK_DIV`.
+2. Read `CH1` through `CH8`, `CTRL`, `EXTCLK_DIV`, and `MOD_DIV`.
 3. Read `STATUS` again.
 4. Treat the snapshot as coherent only when the two `frame_cnt` values match.
 5. If retries fail, keep the last stable snapshot and increment a local debug counter.
@@ -74,8 +74,8 @@ The snapshot flow matches the current RTL contract:
 - `./server-build-cross.sh`
 - `./server-build-docker.sh`
 - `./server-deploy.sh --ip <host>`
-- Run `ads1278-server` on the board and confirm the first bytes on connect are the capability line followed by a 60-byte binary message.
-- Send `SET_ENABLE`, `TRIGGER_SYNC`, and `SET_EXTCLK_DIV` commands and confirm `ACK` messages echo the opcode/value pair and updated snapshot fields.
+- Run `ads1278-server` on the board and confirm the first bytes on connect are the capability line followed by a 64-byte binary message.
+- Send `SET_ENABLE`, `TRIGGER_SYNC`, `SET_EXTCLK_DIV`, and `SET_MOD_DIV` commands and confirm `ACK` messages echo the opcode/value pair and updated snapshot fields.
 
 ## Key files
 

@@ -6,15 +6,20 @@ from typing import List, Sequence
 from .models import Ads1278Message, CommandOpcode, MessageType
 
 SERVER_PORT = 5000
-CAPABILITY_LINE = "RP_CAP:ads1278_v1"
+CAPABILITY_LINE = "RP_CAP:ads1278_v2"
 CAPABILITY_LINE_MAX = len(CAPABILITY_LINE) + 1
 CHANNEL_COUNT = 8
 MIN_EXTCLK_DIV = 3
+MIN_MOD_DIV = 2
+MODULATION_CLOCK_HZ = 125_000_000.0
+DEFAULT_MODULATION_FREQUENCY_HZ = 10.0
+MIN_MODULATION_FREQUENCY_HZ = 0.1
+MAX_MODULATION_FREQUENCY_HZ = 100_000.0
 COMMAND_SIZE = 8
-MESSAGE_SIZE = 60
+MESSAGE_SIZE = 64
 
 COMMAND_STRUCT = struct.Struct("<II")
-MESSAGE_STRUCT = struct.Struct("<7I8i")
+MESSAGE_STRUCT = struct.Struct("<8I8i")
 
 
 class CapabilityLineBuffer:
@@ -91,6 +96,34 @@ def pack_set_extclk_div(divider: int) -> bytes:
     return pack_command(CommandOpcode.SET_EXTCLK_DIV, divider)
 
 
+def modulation_divider_to_frequency_hz(divider: int) -> float:
+    divider = max(int(divider), MIN_MOD_DIV)
+    return MODULATION_CLOCK_HZ / (2.0 * divider)
+
+
+def modulation_frequency_to_divider(frequency_hz: float) -> int:
+    if frequency_hz < MIN_MODULATION_FREQUENCY_HZ:
+        raise ValueError(
+            f"modulation frequency must be >= {MIN_MODULATION_FREQUENCY_HZ:g} Hz"
+        )
+    if frequency_hz > MAX_MODULATION_FREQUENCY_HZ:
+        raise ValueError(
+            f"modulation frequency must be <= {MAX_MODULATION_FREQUENCY_HZ:g} Hz"
+        )
+    divider = int(round(MODULATION_CLOCK_HZ / (2.0 * frequency_hz)))
+    return max(divider, MIN_MOD_DIV)
+
+
+def pack_set_modulation_frequency(frequency_hz: float) -> bytes:
+    return pack_set_modulation_div(modulation_frequency_to_divider(frequency_hz))
+
+
+def pack_set_modulation_div(divider: int) -> bytes:
+    if divider < MIN_MOD_DIV:
+        raise ValueError(f"modulation divider must be >= {MIN_MOD_DIV}")
+    return pack_command(CommandOpcode.SET_MOD_DIV, divider)
+
+
 def unpack_command(payload: bytes) -> tuple[int, int]:
     if len(payload) != COMMAND_SIZE:
         raise ValueError(f"command must be {COMMAND_SIZE} bytes")
@@ -110,7 +143,8 @@ def parse_message(payload: bytes) -> Ads1278Message:
         status_raw=words[4],
         ctrl_raw=words[5],
         extclk_div=words[6],
-        channels=tuple(words[7:]),
+        mod_div=words[7],
+        channels=tuple(words[8:]),
     )
 
 
@@ -122,6 +156,7 @@ def build_message(
     status_raw: int,
     ctrl_raw: int,
     extclk_div: int,
+    mod_div: int,
     channels: Sequence[int],
 ) -> bytes:
     if len(channels) != CHANNEL_COUNT:
@@ -135,5 +170,6 @@ def build_message(
         status_raw & 0xFFFFFFFF,
         ctrl_raw & 0xFFFFFFFF,
         extclk_div & 0xFFFFFFFF,
+        mod_div & 0xFFFFFFFF,
         *[int(channel) for channel in channels],
     )
