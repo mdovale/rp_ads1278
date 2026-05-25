@@ -33,7 +33,7 @@ The current register map is:
 | `0x2C` | `FIFO_STATUS` | R | Bits `[15:0]` = FIFO level in frames, bit `16` = empty, bit `17` = full |
 | `0x30` | `FIFO_DROPS` | R | Count of queued DMA frames dropped because the staged FIFO was full |
 | `0x34` | `FIFO_CAPACITY` | R | Configured staged FIFO depth in frames (`64`) |
-| `0x38` | `DMA_CTRL` | R/W | Bit `0` = DMA enable, bits `[2:1]` = DMA mode, bit `8` = IRQ enable |
+| `0x38` | `DMA_CTRL` | R/W | Bit `0` = DMA enable, bits `[2:1]` = DMA mode (`0` = pattern, `1` = capture), bit `8` = IRQ enable |
 | `0x3C` | `DMA_BASE_ADDR` | R/W | Physical DDR base for the DMA test buffer |
 | `0x40` | `DMA_BUF_SIZE` | R/W | DMA buffer size in bytes, aligned to 128-byte bursts |
 | `0x44` | `DMA_STATUS` | R | DMA enabled/running/error status and current write index |
@@ -43,6 +43,9 @@ The current register map is:
 | `0x54` | `DMA_IRQ_STATUS` | R | Sticky DMA interrupt/status bits |
 | `0x58` | `DMA_IRQ_ACK` | W1C | Clear `DMA_IRQ_STATUS` bits |
 | `0x5C` | `MOD_DIV` | R/W | Modulation square-wave half-period divider, `125 MHz / (2 * MOD_DIV)` |
+| `0x60` | `DMA_BUF_STATUS` | R | Ping-pong ownership: bit `0` = buffer 0 full, bit `1` = buffer 1 full, bit `2` = active hardware buffer, bit `3` = overwrite pending |
+| `0x64` | `DMA_BUF_ACK` | W1C | Software-consumed buffer acknowledgement: bit `0` clears buffer 0 full, bit `1` clears buffer 1 full |
+| `0x68` | `DMA_OVERWRITE_COUNT` | R | Count of times DMA advanced into a buffer still marked full |
 
 Current read and write semantics:
 
@@ -54,6 +57,9 @@ Current read and write semantics:
 - `FIFO_STATUS` reports staged DMA FIFO occupancy for bring-up and debug without changing the legacy MMIO latest-sample path.
 - `FIFO_DROPS` resets to `0` when acquisition is disabled.
 - `FIFO_CAPACITY` is a read-only constant for software-visible bring-up checks.
+- `DMA_BUF_STATUS` exposes the first-pass ping-pong ownership state. A buffer full bit means hardware has completed that DDR buffer and software owns it until it writes the matching bit to `DMA_BUF_ACK`.
+- `DMA_BUF_SIZE` is interpreted as one ping-pong buffer size; buffer 0 starts at `DMA_BASE_ADDR`, and buffer 1 starts at `DMA_BASE_ADDR + DMA_BUF_SIZE`.
+- If DMA wraps into a buffer whose full bit is still set, hardware increments `DMA_OVERWRITE_COUNT` and sets the overwrite-pending bit instead of silently hiding the ownership violation.
 - `MOD_DIV` resets to `6,250,000`, which corresponds to a nominal `10 Hz` modulation square wave from a `125 MHz` input clock.
 
 Important current caveats:
@@ -102,6 +108,7 @@ Reset and lifecycle notes:
 - The current `new_data` behavior is convenient for RTL but awkward for software polling because it is not sticky.
 - `STATUS` does not currently expose a latched "sample available until acknowledged" bit.
 - The staged FIFO has no consumer yet, so long captures can intentionally drive it full during Phase 3 bring-up.
+- DMA mode `1` (capture) drains the acquisition FIFO into DDR as `ads1278_dma_frame` records on a **128-byte stride** (40-byte payload + padding + word-31 canary `0xAD127831`). Acquisition (`CTRL` bit 1) and DMA (`DMA_CTRL` bit 0) must both be enabled for live ADC capture. See `docs/feats/dma-frame-record.md`.
 - Sharing `EXTCLK_DIV` between the ADC clock generator and the SPI shift timing may not match the final desired hardware contract.
 - The base address is defined in the block design, so any future BD remap must be kept in sync with software documentation and code.
 

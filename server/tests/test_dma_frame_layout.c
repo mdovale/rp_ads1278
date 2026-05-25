@@ -6,9 +6,14 @@
 int main(void)
 {
     assert(sizeof(ads1278_dma_frame) == ADS1278_DMA_FRAME_SIZE);
+    assert(ADS1278_DMA_FRAME_SIZE == 128u);
+    assert(ADS1278_DMA_FRAME_PAYLOAD_SIZE == 40u);
+    assert(ADS1278_DMA_FRAME_WORDS == 32u);
     assert(offsetof(ads1278_dma_frame, frame_count) == ADS1278_DMA_FRAME_FRAME_COUNT_OFFSET);
     assert(offsetof(ads1278_dma_frame, status_raw) == ADS1278_DMA_FRAME_STATUS_RAW_OFFSET);
     assert(offsetof(ads1278_dma_frame, channels[0]) == ADS1278_DMA_FRAME_CHANNELS_OFFSET);
     assert(offsetof(ads1278_dma_frame, channels[7]) == 36u);
+    assert(offsetof(ads1278_dma_frame, padding[0]) == ADS1278_DMA_FRAME_PADDING_OFFSET);
+    assert(offsetof(ads1278_dma_frame, padding[21]) == ADS1278_DMA_FRAME_STRIDE_CANARY_OFFSET);
     return 0;
 }

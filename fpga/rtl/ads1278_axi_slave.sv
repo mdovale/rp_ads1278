@@ -17,7 +17,7 @@
 //   0x2C  FIFO_STATUS R  [15:0] level  [16] empty  [17] full
 //   0x30  FIFO_DROPS  R  Count of frames not queued because the FIFO was full
 //   0x34  FIFO_CAPACITY R Configured frame depth of the staged DMA FIFO
-//   0x38  DMA_CTRL   R/W  [0] enable [2:1] mode [8] irq_enable
+//   0x38  DMA_CTRL   R/W  [0] enable [2:1] mode (0=pattern 1=capture) [8] irq_enable
 //   0x3C  DMA_BASE_ADDR R/W Physical DDR base for the DMA test buffer
 //   0x40  DMA_BUF_SIZE R/W Buffer size in bytes, aligned to 128-byte bursts
 //   0x44  DMA_STATUS R   [0] enabled [1] running [2] config_error
@@ -29,6 +29,10 @@
 //   0x54  DMA_IRQ_STATUS R Sticky DMA interrupt/status bits
 //   0x58  DMA_IRQ_ACK W1C Clear DMA_IRQ_STATUS bits
 //   0x5C  MOD_DIV    R/W half-period in sys-clk cycles (default 10 Hz)
+//   0x60  DMA_BUF_STATUS R  [0] buf0_full [1] buf1_full [2] active_buf
+//                          [3] overwrite_pending
+//   0x64  DMA_BUF_ACK W1C Clear buf0_full / buf1_full software ownership bits
+//   0x68  DMA_OVERWRITE_COUNT R Number of buffer-full overwrite events
 ////////////////////////////////////////////////////////////////////////////////
 
 module ads1278_axi_slave #(
@@ -53,6 +57,9 @@ module ads1278_axi_slave #(
   input  logic        dma_phase4_config_error,
   input  logic        dma_phase4_bresp_error_pulse,
   input  logic [1:0]  dma_phase4_last_bresp,
+  output logic [319:0] dma_fifo_dout,
+  output logic        dma_fifo_empty,
+  input  logic        dma_fifo_pop,
   axi4_lite_if.s      bus
 );
 
@@ -85,6 +92,9 @@ localparam int unsigned REG_DMA_ERRORS   = 'h14;
 localparam int unsigned REG_DMA_IRQ_STAT = 'h15;
 localparam int unsigned REG_DMA_IRQ_ACK  = 'h16;
 localparam int unsigned REG_MOD_DIV      = 'h17;
+localparam int unsigned REG_DMA_BUF_STAT = 'h18;
+localparam int unsigned REG_DMA_BUF_ACK  = 'h19;
+localparam int unsigned REG_DMA_OVERWRITES = 'h1A;
 
 // AXI latched addresses
 logic [AW-1:ADDR_LSB] axi_awaddr;
@@ -111,23 +121,32 @@ logic [DW-1:0] dma_error_count_reg;
 logic [DW-1:0] dma_irq_status_reg;
 logic [DW-1:0] dma_status_reg;
 logic [DW-1:0] dma_write_index_reg;
+logic [DW-1:0] dma_buf_status_reg;
+logic [DW-1:0] dma_overwrite_count_reg;
 logic [DW-1:0] dma_irq_ack_mask;
+logic [DW-1:0] dma_buf_ack_mask;
 logic [DW-1:0] mod_div_reg;
+logic [1:0] dma_buf_full_reg;
+logic dma_active_buf_reg;
+logic dma_enable_prev;
 
 // Derived control signals
 logic ctrl_enable;
 logic sync_trigger;
 logic dma_irq_enable;
 logic dma_irq_pending;
+logic dma_enable_rise;
 
 assign ctrl_enable  = ctrl_reg[1];
 assign sync_trigger = ctrl_reg[0];
 assign dma_phase4_enable = dma_ctrl_reg[0];
 assign dma_phase4_mode = dma_ctrl_reg[2:1];
-assign dma_phase4_base_addr = dma_base_addr_reg;
+assign dma_phase4_base_addr = dma_base_addr_reg
+  + (dma_active_buf_reg ? dma_buf_size_reg : '0);
 assign dma_phase4_buf_size = dma_buf_size_reg;
 assign dma_irq_enable = dma_ctrl_reg[8];
-assign dma_irq_pending = |dma_irq_status_reg[2:0];
+assign dma_irq_pending = |dma_irq_status_reg[3:0];
+assign dma_enable_rise = dma_phase4_enable & ~dma_enable_prev;
 
 always_comb begin
   dma_status_reg = '0;
@@ -136,16 +155,30 @@ always_comb begin
   dma_status_reg[2] = dma_phase4_config_error;
   dma_status_reg[3] = dma_irq_status_reg[0];
   dma_status_reg[4] = dma_irq_status_reg[1];
+  dma_status_reg[5] = dma_irq_status_reg[2];
+  dma_status_reg[6] = dma_irq_status_reg[3];
   dma_status_reg[9:8] = dma_phase4_last_bresp;
   dma_status_reg[31:16] = dma_phase4_write_index;
 
   dma_write_index_reg = '0;
   dma_write_index_reg[15:0] = dma_phase4_write_index;
 
+  dma_buf_status_reg = '0;
+  dma_buf_status_reg[1:0] = dma_buf_full_reg;
+  dma_buf_status_reg[2] = dma_active_buf_reg;
+  dma_buf_status_reg[3] = dma_irq_status_reg[3];
+
   dma_irq_ack_mask = '0;
   if (slv_reg_wren && (axi_awaddr == REG_DMA_IRQ_ACK)) begin
     for (int unsigned i = 0; i < (DW/8); i++) begin
       if (bus.WSTRB[i]) dma_irq_ack_mask[(i*8)+:8] = bus.WDATA[(i*8)+:8];
+    end
+  end
+
+  dma_buf_ack_mask = '0;
+  if (slv_reg_wren && (axi_awaddr == REG_DMA_BUF_ACK)) begin
+    for (int unsigned i = 0; i < (DW/8); i++) begin
+      if (bus.WSTRB[i]) dma_buf_ack_mask[(i*8)+:8] = bus.WDATA[(i*8)+:8];
     end
   end
 end
@@ -178,6 +211,9 @@ ads1278_acq_top u_acq (
   .fifo_status  (fifo_status_reg),
   .fifo_drop_count (fifo_drop_count_reg),
   .fifo_capacity (fifo_capacity_reg),
+  .dma_fifo_dout (dma_fifo_dout),
+  .dma_fifo_empty(dma_fifo_empty),
+  .dma_fifo_pop  (dma_fifo_pop),
   .ctrl_enable  (ctrl_enable),
   .sync_trigger (sync_trigger),
   .extclk_div   (extclk_div_reg)
@@ -275,12 +311,31 @@ if (~bus.ARESETn) begin
   dma_wrap_count_reg <= '0;
   dma_error_count_reg <= '0;
   dma_irq_status_reg <= '0;
+  dma_overwrite_count_reg <= '0;
+  dma_buf_full_reg <= 2'b00;
+  dma_active_buf_reg <= 1'b0;
+  dma_enable_prev <= 1'b0;
 end else begin
+  dma_enable_prev <= dma_phase4_enable;
   dma_irq_status_reg <= dma_irq_status_reg & ~dma_irq_ack_mask;
+  dma_buf_full_reg <= dma_buf_full_reg & ~dma_buf_ack_mask[1:0];
+
+  if (dma_enable_rise) begin
+    dma_buf_full_reg <= 2'b00;
+    dma_active_buf_reg <= 1'b0;
+    dma_irq_status_reg[3] <= 1'b0;
+  end
 
   if (dma_phase4_wrap_pulse) begin
     dma_wrap_count_reg <= dma_wrap_count_reg + 1'b1;
     dma_irq_status_reg[0] <= 1'b1;
+    dma_buf_full_reg[dma_active_buf_reg] <= 1'b1;
+    dma_active_buf_reg <= ~dma_active_buf_reg;
+
+    if (dma_active_buf_reg ? dma_buf_full_reg[0] : dma_buf_full_reg[1]) begin
+      dma_overwrite_count_reg <= dma_overwrite_count_reg + 1'b1;
+      dma_irq_status_reg[3] <= 1'b1;
+    end
   end
 
   if (dma_phase4_bresp_error_pulse) begin
@@ -357,6 +412,9 @@ if (slv_reg_rden) begin
     REG_DMA_IRQ_STAT: bus.RDATA <= dma_irq_status_reg;
     REG_DMA_IRQ_ACK: bus.RDATA <= 32'h0000_0000;
     REG_MOD_DIV: bus.RDATA <= mod_div_reg;
+    REG_DMA_BUF_STAT: bus.RDATA <= dma_buf_status_reg;
+    REG_DMA_BUF_ACK: bus.RDATA <= 32'h0000_0000;
+    REG_DMA_OVERWRITES: bus.RDATA <= dma_overwrite_count_reg;
     default: bus.RDATA <= 32'hDEAD_BEEF;
   endcase
 end

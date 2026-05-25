@@ -1,0 +1,20 @@
+set -e
+out_dir='/home/saruul/rp_ads1278/fpga/work125_14/rp_ads1278.runs/impl_1'
+cd "$out_dir"
+bit_name=$(ls -1 *.bit 2>/dev/null | head -1 | xargs basename)
+[[ -n "$bit_name" ]] || { echo 'Error: no .bit file found'; exit 1; }
+bootgen_path=$(command -v bootgen 2>/dev/null)
+if [[ -z "$bootgen_path" ]]; then
+  vd=$(command -v vivado 2>/dev/null)
+  if [[ -n "$vd" ]] && [[ -x "$(dirname "$vd")/bootgen" ]]; then
+    bootgen_path="$(dirname "$vd")/bootgen"
+  fi
+fi
+if [[ -z "$bootgen_path" ]]; then
+  bootgen_path=$(find /opt/Xilinx -name bootgen -type f 2>/dev/null | head -1)
+fi
+[[ -n "$bootgen_path" ]] || { echo 'Error: bootgen not found.'; exit 1; }
+out_name="${bit_name%.bit}.bit.bin"
+printf 'all:\n{\n  %s\n}\n' "$bit_name" > design.bif
+"$bootgen_path" -image design.bif -arch zynq -process_bitstream bin -o "$out_dir/$out_name" -w
+rm -f design.bif

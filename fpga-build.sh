@@ -384,11 +384,16 @@ convert_bit_to_bin_remote() {
   tmp_script="$(mktemp "$FPGA_DIR/.remote_bootgen_XXXXXX")"
   trap "rm -f '$tmp_script'" RETURN
   cat > "$tmp_script" << REMOTEEOF
-set -e
+set -euo pipefail
 out_dir='$remote_impl_dir'
 cd "\$out_dir"
-bit_name=\$(ls -1 *.bit 2>/dev/null | head -1 | xargs basename)
-[[ -n "\$bit_name" ]] || { echo 'Error: no .bit file found'; exit 1; }
+shopt -s nullglob
+bits=( *.bit )
+if (( \${#bits[@]} == 0 )); then
+  echo 'Error: no .bit file found (synthesis likely failed)'
+  exit 1
+fi
+bit_name="\${bits[0]}"
 bootgen_path=\$(command -v bootgen 2>/dev/null)
 if [[ -z "\$bootgen_path" ]]; then
   vd=\$(command -v $vivado_cmd 2>/dev/null)
@@ -607,8 +612,20 @@ cat > "$tmpfile" <<EOF
 set rp_model $TARGET
 $rp_force_line
 source regenerate_project_and_bd.tcl
+launch_runs synth_1 -jobs $JOBS
+wait_on_run synth_1
+set synth_status [get_property STATUS [get_runs synth_1]]
+if {![string match "*Complete!" \$synth_status]} {
+  puts "ERROR: synth_1 finished with status: \$synth_status"
+  exit 1
+}
 launch_runs impl_1 -to_step write_bitstream -jobs $JOBS
 wait_on_run impl_1
+set impl_status [get_property STATUS [get_runs impl_1]]
+if {![string match "*Complete!" \$impl_status]} {
+  puts "ERROR: impl_1 finished with status: \$impl_status"
+  exit 1
+}
 EOF
 if [[ "$USE_REMOTE" == "1" ]]; then
   run_vivado "$FPGA_DIR" "$tmpfile" "$REMOTE_TARGET"

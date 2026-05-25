@@ -1,3 +1,4 @@
+#include "dma_frame.h"
 #include "memory_map.h"
 
 #include <errno.h>
@@ -14,11 +15,80 @@ typedef struct {
     volatile uint32_t *words;
 } ads1278_ddr_map;
 
+typedef struct {
+    size_t hit_count;
+    size_t first_hit_word;
+    size_t frame_start_phase;
+    int found;
+} ads1278_canary_scan;
+
 static void print_usage(const char *argv0)
 {
     fprintf(stderr,
-        "Usage: %s [--mem-path PATH] [snapshot | dma-status | read OFFSET | write OFFSET VALUE | ddr-read WORD_INDEX | ddr-dump [WORD_COUNT]]\n",
+        "Usage: %s [--mem-path PATH] [snapshot | dma-status | dma-frames [FRAME_COUNT] | dma-scan-canary | read OFFSET | write OFFSET VALUE | ddr-read WORD_INDEX | ddr-dump [WORD_COUNT]]\n",
         argv0);
+}
+
+/*
+ * PL HP0 writes are not L1-coherent on Zynq. Invalidate the CPU view of the
+ * mmap'd DDR buffer before reading frames written by the FPGA.
+ */
+static void ads1278_ddr_sync_for_cpu(void *addr, size_t len)
+{
+#if defined(__aarch64__) || defined(__arm__)
+    __builtin___clear_cache((char *)addr, (char *)addr + len);
+#endif
+    __sync_synchronize();
+}
+
+static ads1278_canary_scan ads1278_ddr_scan_canary(const ads1278_ddr_map *ddr)
+{
+    ads1278_canary_scan scan;
+    size_t word_count = ddr->map_size / sizeof(uint32_t);
+    size_t index;
+
+    memset(&scan, 0, sizeof(scan));
+
+    for (index = 0; index < word_count; ++index) {
+        if (ddr->words[index] != ADS1278_DMA_FRAME_STRIDE_CANARY) {
+            continue;
+        }
+        if (scan.hit_count == 0u) {
+            scan.first_hit_word = index;
+        }
+        ++scan.hit_count;
+    }
+
+    scan.found = (scan.hit_count != 0u);
+    if (scan.found) {
+        /*
+         * The canary is the last word of a 32-word record. If the writer drops
+         * an initial partial beat, valid records may start at a non-zero phase.
+         */
+        scan.frame_start_phase =
+            (scan.first_hit_word + 1u) % ADS1278_DMA_FRAME_WORDS;
+    }
+
+    return scan;
+}
+
+static void ads1278_ddr_report_canary_scan(const ads1278_canary_scan *scan)
+{
+    if (!scan->found) {
+        printf(
+            "canary_scan   : not found (expected 0x%08x per 128-byte record)\n",
+            ADS1278_DMA_FRAME_STRIDE_CANARY
+        );
+        return;
+    }
+
+    printf(
+        "canary_scan   : %zu hits, first at word[%zu], canary_mod32=%zu, frame_start_phase=%zu\n",
+        scan->hit_count,
+        scan->first_hit_word,
+        scan->first_hit_word % ADS1278_DMA_FRAME_WORDS,
+        scan->frame_start_phase
+    );
 }
 
 static int parse_u32(const char *text, uint32_t *value)
@@ -78,6 +148,8 @@ static void print_dma_status(const ads1278_mmio *mmio)
     uint32_t dma_wrap_count;
     uint32_t dma_error_count;
     uint32_t dma_irq_status;
+    uint32_t dma_buf_status;
+    uint32_t dma_overwrite_count;
 
     dma_ctrl = ads1278_mmio_read32(mmio, ADS1278_REG_DMA_CTRL);
     dma_base_addr = ads1278_mmio_read32(mmio, ADS1278_REG_DMA_BASE_ADDR);
@@ -87,6 +159,8 @@ static void print_dma_status(const ads1278_mmio *mmio)
     dma_wrap_count = ads1278_mmio_read32(mmio, ADS1278_REG_DMA_WRAP_COUNT);
     dma_error_count = ads1278_mmio_read32(mmio, ADS1278_REG_DMA_ERROR_COUNT);
     dma_irq_status = ads1278_mmio_read32(mmio, ADS1278_REG_DMA_IRQ_STATUS);
+    dma_buf_status = ads1278_mmio_read32(mmio, ADS1278_REG_DMA_BUF_STATUS);
+    dma_overwrite_count = ads1278_mmio_read32(mmio, ADS1278_REG_DMA_OVERWRITE_COUNT);
 
     printf("dma_ctrl       : 0x%08x\n", dma_ctrl);
     printf("dma_enable     : %u\n", (dma_ctrl & ADS1278_DMA_CTRL_ENABLE) != 0u ? 1u : 0u);
@@ -112,6 +186,14 @@ static void print_dma_status(const ads1278_mmio *mmio)
         (dma_status & ADS1278_DMA_STATUS_ERROR_PENDING) != 0u ? 1u : 0u
     );
     printf(
+        "dma_cfg_pend   : %u\n",
+        (dma_status & ADS1278_DMA_STATUS_CONFIG_PENDING) != 0u ? 1u : 0u
+    );
+    printf(
+        "dma_over_pend  : %u\n",
+        (dma_status & ADS1278_DMA_STATUS_OVERWRITE_PENDING) != 0u ? 1u : 0u
+    );
+    printf(
         "dma_last_bresp : %u\n",
         (unsigned int)((dma_status & ADS1278_DMA_STATUS_LAST_BRESP_MASK)
             >> ADS1278_DMA_STATUS_LAST_BRESP_SHIFT)
@@ -120,6 +202,90 @@ static void print_dma_status(const ads1278_mmio *mmio)
     printf("dma_wrap_count : %u\n", dma_wrap_count);
     printf("dma_error_count: %u\n", dma_error_count);
     printf("dma_irq_status : 0x%08x\n", dma_irq_status);
+    printf("dma_buf_status : 0x%08x\n", dma_buf_status);
+    printf(
+        "dma_buf0_full  : %u\n",
+        (dma_buf_status & ADS1278_DMA_BUF_STATUS_BUF0_FULL) != 0u ? 1u : 0u
+    );
+    printf(
+        "dma_buf1_full  : %u\n",
+        (dma_buf_status & ADS1278_DMA_BUF_STATUS_BUF1_FULL) != 0u ? 1u : 0u
+    );
+    printf(
+        "dma_active_buf : %u\n",
+        (dma_buf_status & ADS1278_DMA_BUF_STATUS_ACTIVE_BUF) != 0u ? 1u : 0u
+    );
+    printf("dma_overwrites : %u\n", dma_overwrite_count);
+}
+
+static void print_dma_frames(
+    const ads1278_ddr_map *ddr,
+    size_t frame_start_word,
+    size_t max_frames
+)
+{
+    size_t frame_index;
+    size_t available_frames;
+    uint32_t previous_frame_count;
+    int has_previous;
+
+    if (frame_start_word >= (ddr->map_size / sizeof(uint32_t))) {
+        return;
+    }
+
+    available_frames =
+        ((ddr->map_size / sizeof(uint32_t)) - frame_start_word)
+        / ADS1278_DMA_FRAME_WORDS;
+    if (max_frames > available_frames) {
+        max_frames = available_frames;
+    }
+
+    previous_frame_count = 0u;
+    has_previous = 0;
+
+    for (frame_index = 0; frame_index < max_frames; ++frame_index) {
+        size_t word_index = frame_start_word + (frame_index * ADS1278_DMA_FRAME_WORDS);
+        const volatile uint32_t *words =
+            &ddr->words[word_index];
+        const ads1278_dma_frame *frame = (const ads1278_dma_frame *)words;
+        uint32_t frame_count = frame->frame_count;
+        uint32_t status_raw = frame->status_raw;
+        int32_t ch1 = frame->channels[0];
+        uint32_t gap = 0u;
+        const char *pad_label = "ok";
+        size_t pad_index;
+        int padding_zero = 1;
+
+        for (pad_index = 0; pad_index < 21u; ++pad_index) {
+            if (frame->padding[pad_index] != 0u) {
+                padding_zero = 0;
+                break;
+            }
+        }
+        if (!padding_zero) {
+            pad_label = "BAD";
+        } else if (frame->padding[21] != ADS1278_DMA_FRAME_STRIDE_CANARY) {
+            pad_label = "LEGACY";
+        }
+
+        if (has_previous && frame_count > previous_frame_count) {
+            gap = frame_count - previous_frame_count;
+        }
+
+        printf(
+            "frame[%04zu] word=%5zu count=%5u status=0x%08x ch1=%11d gap=%u pad=%s\n",
+            frame_index,
+            word_index,
+            frame_count,
+            status_raw,
+            ch1,
+            has_previous ? gap : 0u,
+            pad_label
+        );
+
+        previous_frame_count = frame_count;
+        has_previous = 1;
+    }
 }
 
 static int ads1278_ddr_open(
@@ -169,6 +335,7 @@ static int ads1278_ddr_open(
     }
 
     ddr->words = (volatile uint32_t *)mapped;
+    ads1278_ddr_sync_for_cpu(mapped, ddr->map_size);
     return 0;
 }
 
@@ -235,6 +402,71 @@ int main(int argc, char **argv)
     if (strcmp(command, "dma-status") == 0) {
         print_dma_status(&mmio);
         ads1278_mmio_close(&mmio);
+        return EXIT_SUCCESS;
+    }
+
+    if (strcmp(command, "dma-frames") == 0) {
+        uint32_t requested_frames;
+        uint32_t ddr_base_addr;
+        uint32_t ddr_buf_size;
+        ads1278_ddr_map ddr;
+
+        requested_frames = 8u;
+        if (argi < argc && parse_u32(argv[argi], &requested_frames) != 0) {
+            print_usage(argv[0]);
+            ads1278_mmio_close(&mmio);
+            return EXIT_FAILURE;
+        }
+
+        if (ads1278_dma_get_buffer_config(&mmio, &ddr_base_addr, &ddr_buf_size) != 0) {
+            perror("read dma buffer config");
+            ads1278_mmio_close(&mmio);
+            return EXIT_FAILURE;
+        }
+        ads1278_mmio_close(&mmio);
+
+        ddr.fd = -1;
+        if (ads1278_ddr_open(&ddr, mem_path, ddr_base_addr, ddr_buf_size) != 0) {
+            perror("open ddr");
+            return EXIT_FAILURE;
+        }
+
+        {
+            ads1278_canary_scan scan = ads1278_ddr_scan_canary(&ddr);
+            ads1278_ddr_report_canary_scan(&scan);
+            print_dma_frames(
+                &ddr,
+                scan.found ? scan.frame_start_phase : 0u,
+                requested_frames
+            );
+        }
+        ads1278_ddr_close(&ddr);
+        return EXIT_SUCCESS;
+    }
+
+    if (strcmp(command, "dma-scan-canary") == 0) {
+        uint32_t ddr_base_addr;
+        uint32_t ddr_buf_size;
+        ads1278_ddr_map ddr;
+
+        if (ads1278_dma_get_buffer_config(&mmio, &ddr_base_addr, &ddr_buf_size) != 0) {
+            perror("read dma buffer config");
+            ads1278_mmio_close(&mmio);
+            return EXIT_FAILURE;
+        }
+        ads1278_mmio_close(&mmio);
+
+        ddr.fd = -1;
+        if (ads1278_ddr_open(&ddr, mem_path, ddr_base_addr, ddr_buf_size) != 0) {
+            perror("open ddr");
+            return EXIT_FAILURE;
+        }
+
+        {
+            ads1278_canary_scan scan = ads1278_ddr_scan_canary(&ddr);
+            ads1278_ddr_report_canary_scan(&scan);
+        }
+        ads1278_ddr_close(&ddr);
         return EXIT_SUCCESS;
     }
 

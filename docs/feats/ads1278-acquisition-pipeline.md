@@ -13,7 +13,7 @@ Describe the current acquisition lifecycle from `DRDY` detection through SPI shi
 
 ## User-facing behavior
 
-When acquisition is enabled, the FPGA waits for a falling edge on `DRDY`, delays for one full EXTCLK period, then clocks exactly 192 SCLK edges to read eight 24-bit channels from `DOUT1` in TDM order. After the full frame is captured, the FPGA updates all eight channel registers together, pulses `new_data`, increments the 16-bit frame counter, and attempts to queue one sign-extended DMA frame record into the staged PL FIFO.
+When acquisition is enabled, the FPGA waits for a falling edge on `DRDY`, delays for one full EXTCLK period, then clocks exactly 192 SCLK edges to read eight 24-bit channels from `DOUT1` in TDM order. After the full frame is captured, the FPGA updates all eight channel registers together, pulses `new_data`, increments the 16-bit frame counter, and attempts to queue one 320-bit DMA frame record into the staged PL FIFO. The DMA serializer writes each record to DDR on a **128-byte stride** (40-byte payload + zero padding + canary) so each record matches one HP0 burst — see `docs/feats/dma-frame-record.md`.
 
 Current behavior that software or bring-up code can observe:
 
@@ -111,7 +111,7 @@ Reset and disable behavior:
 - The divider value used for EXTCLK is also reused for SPI capture timing, which may not remain the final contract.
 - Channel words are zero-extended rather than sign-extended, so software must reinterpret the 24-bit payload correctly.
 - `overflow` only records that overlap happened at least once; it does not count how many frames were missed by the SPI engine.
-- The staged FIFO has no consumer yet in Phase 3, so it will eventually fill during sustained acquisition and start incrementing the FIFO drop counter.
+- In DMA capture mode (`DMA_CTRL` mode `1`), the staged FIFO is consumed by the HP0 writer. If DMA cannot keep up, `FIFO_DROPS` still increments.
 - `SYNC` is generated independently of the enable bit, which may or may not match the intended operational model.
 
 ## Key files

@@ -34,6 +34,9 @@ module red_pitaya_ps (
   output logic           dma_phase4_config_error,
   output logic           dma_phase4_bresp_error_pulse,
   output logic [1:0]     dma_phase4_last_bresp,
+  input  logic [319:0]   dma_fifo_dout,
+  input  logic           dma_fifo_empty,
+  output logic           dma_fifo_pop,
   axi4_lite_if.m         bus
 );
 
@@ -189,6 +192,9 @@ ads1278_dma_phase4 u_dma_phase4 (
   .mode_select  (dma_phase4_mode),
   .base_addr    (dma_phase4_base_addr),
   .buffer_size_bytes(dma_phase4_buf_size),
+  .fifo_empty   (dma_fifo_empty),
+  .fifo_dout    (dma_fifo_dout),
+  .fifo_pop     (dma_fifo_pop),
   .write_index  (dma_phase4_write_index),
   .wrap_pulse   (dma_phase4_wrap_pulse),
   .running      (dma_phase4_running),

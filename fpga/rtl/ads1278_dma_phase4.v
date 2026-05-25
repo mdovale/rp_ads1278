@@ -1,10 +1,10 @@
 `timescale 1 ns / 1 ps
 
 ////////////////////////////////////////////////////////////////////////////////
-// Phase 4 DMA bring-up block:
-// - streams a deterministic test pattern
-// - writes bursts into DDR via a PS HP port
-// - keeps the legacy MMIO plane untouched
+// PL DMA writer:
+// - mode 0: synthetic incrementing pattern (Phase 4/7 bring-up)
+// - mode 1: acquisition FIFO frames (Phase 8 capture)
+// Writes bursts into DDR via a PS HP port.
 ////////////////////////////////////////////////////////////////////////////////
 
 module ads1278_dma_phase4 #(
@@ -17,6 +17,10 @@ module ads1278_dma_phase4 #(
     input  wire [1:0]  mode_select,
     input  wire [31:0] base_addr,
     input  wire [31:0] buffer_size_bytes,
+
+    input  wire        fifo_empty,
+    input  wire [319:0] fifo_dout,
+    output wire        fifo_pop,
 
     output wire [15:0] write_index,
     output wire        wrap_pulse,
@@ -69,14 +73,27 @@ module ads1278_dma_phase4 #(
     output wire        m_axi_rready
 );
 
+localparam [1:0] MODE_PATTERN = 2'd0;
+localparam [1:0] MODE_CAPTURE = 2'd1;
+
 wire [31:0] pattern_tdata;
 wire        pattern_tvalid;
 wire        pattern_tready;
+
+wire [31:0] capture_tdata;
+wire        capture_tvalid;
+wire        capture_tready;
+
+wire [31:0] stream_tdata;
+wire        stream_tvalid;
+wire        stream_tready;
+
 wire [15:0] writer_burst_index;
 wire [31:0] dma_base_addr;
 wire [15:0] burst_count_max;
 wire [24:0] configured_burst_count;
 wire        mode_supported;
+wire        capture_mode;
 wire        size_aligned;
 wire        size_in_range;
 wire        size_nonzero;
@@ -84,12 +101,13 @@ wire        writer_enable;
 
 reg [1:0]   last_bresp_reg;
 
+assign capture_mode = (mode_select == MODE_CAPTURE);
 assign dma_base_addr = (base_addr != 32'd0) ? base_addr : DDR_BASE_ADDR;
 assign configured_burst_count = buffer_size_bytes[31:7];
 assign size_aligned = (buffer_size_bytes[6:0] == 7'd0);
 assign size_in_range = (configured_burst_count != 25'd0) && (configured_burst_count <= 25'd65536);
 assign size_nonzero = (buffer_size_bytes != 32'd0);
-assign mode_supported = (mode_select == 2'd0);
+assign mode_supported = (mode_select == MODE_PATTERN) || (mode_select == MODE_CAPTURE);
 assign config_error = ~mode_supported | ~size_nonzero | ~size_aligned | ~size_in_range;
 assign burst_count_max = size_in_range ? (configured_burst_count[15:0] - 16'd1) : BURST_COUNT_MAX;
 assign writer_enable = enable & ~config_error;
@@ -98,6 +116,11 @@ assign running = writer_enable;
 assign wrap_pulse = m_axi_awvalid && m_axi_awready && (writer_burst_index == burst_count_max);
 assign bresp_error_pulse = m_axi_bvalid && m_axi_bready && (m_axi_bresp != 2'b00);
 assign last_bresp = last_bresp_reg;
+
+assign stream_tdata = capture_mode ? capture_tdata : pattern_tdata;
+assign stream_tvalid = capture_mode ? capture_tvalid : pattern_tvalid;
+assign pattern_tready = capture_mode ? 1'b0 : stream_tready;
+assign capture_tready = capture_mode ? stream_tready : 1'b0;
 
 always @(posedge clk or negedge rstn) begin
     if (!rstn) begin
@@ -112,10 +135,22 @@ end
 ads1278_dma_pattern_source u_pattern (
     .clk          (clk),
     .rstn         (rstn),
-    .enable       (writer_enable),
+    .enable       (writer_enable && !capture_mode),
     .m_axis_tdata (pattern_tdata),
     .m_axis_tvalid(pattern_tvalid),
     .m_axis_tready(pattern_tready)
+);
+
+ads1278_dma_fifo_axis u_capture (
+    .clk           (clk),
+    .rstn          (rstn),
+    .enable        (writer_enable && capture_mode),
+    .fifo_empty    (fifo_empty),
+    .fifo_dout     (fifo_dout),
+    .fifo_pop      (fifo_pop),
+    .m_axis_tdata  (capture_tdata),
+    .m_axis_tvalid (capture_tvalid),
+    .m_axis_tready (capture_tready)
 );
 
 axis_ram_writer #(
@@ -147,9 +182,9 @@ axis_ram_writer #(
     .m_axi_wready (m_axi_wready),
     .m_axi_bvalid (m_axi_bvalid),
     .m_axi_bready (m_axi_bready),
-    .s_axis_tdata (pattern_tdata),
-    .s_axis_tvalid(pattern_tvalid),
-    .s_axis_tready(pattern_tready)
+    .s_axis_tdata (stream_tdata),
+    .s_axis_tvalid(stream_tvalid),
+    .s_axis_tready(stream_tready)
 );
 
 assign m_axi_awlock  = 2'b00;

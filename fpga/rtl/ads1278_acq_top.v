@@ -28,6 +28,10 @@ module ads1278_acq_top (
     output wire [31:0] fifo_status,
     output wire [31:0] fifo_drop_count,
     output wire [31:0] fifo_capacity,
+    // Staged DMA FIFO read port (consumed by ads1278_dma_phase4 capture mode)
+    output wire [319:0] dma_fifo_dout,
+    output wire        dma_fifo_empty,
+    input  wire        dma_fifo_pop,
     // Control inputs (from AXI registers)
     input  wire        ctrl_enable,
     input  wire        sync_trigger,
@@ -47,7 +51,7 @@ wire [31:0] dma_status_raw;
 
 // FIFO state for staged DMA bring-up
 wire [319:0] fifo_frame_in;
-wire [319:0] fifo_frame_out_unused;
+wire [319:0] fifo_frame_out;
 wire [DMA_FIFO_LEVEL_W-1:0] fifo_level_raw;
 wire        fifo_empty_raw;
 wire        fifo_full_raw;
@@ -73,6 +77,8 @@ assign fifo_level_dbg = {{(16 - DMA_FIFO_LEVEL_W){1'b0}}, fifo_level_raw};
 assign fifo_status = {14'd0, fifo_full_raw, fifo_empty_raw, fifo_level_dbg};
 assign fifo_drop_count = fifo_drop_count_reg;
 assign fifo_capacity = DMA_FIFO_DEPTH;
+assign dma_fifo_dout = fifo_frame_out;
+assign dma_fifo_empty = fifo_empty_raw;
 
 assign fifo_frame_in = {
     {16'd0, spi_frame_cnt},
@@ -96,9 +102,9 @@ ads1278_frame_fifo #(
     .rstn  (rstn),
     .clear (~ctrl_enable),
     .push  (fifo_push),
-    .pop   (1'b0),
+    .pop   (dma_fifo_pop),
     .din   (fifo_frame_in),
-    .dout  (fifo_frame_out_unused),
+    .dout  (fifo_frame_out),
     .empty (fifo_empty_raw),
     .full  (fifo_full_raw),
     .level (fifo_level_raw)

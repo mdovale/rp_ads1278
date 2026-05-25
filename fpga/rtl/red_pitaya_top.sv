@@ -200,6 +200,9 @@ logic dma_phase4_running;
 logic dma_phase4_config_error;
 logic dma_phase4_bresp_error_pulse;
 logic [1:0] dma_phase4_last_bresp;
+logic [319:0] dma_fifo_dout;
+logic dma_fifo_empty;
+logic dma_fifo_pop;
 
 // Keep the PS-facing AXI path on the stock FCLK/reset pair instead of tying it
 // to the ADC PLL domain.
@@ -241,6 +244,9 @@ red_pitaya_ps ps (
   .dma_phase4_config_error (dma_phase4_config_error),
   .dma_phase4_bresp_error_pulse (dma_phase4_bresp_error_pulse),
   .dma_phase4_last_bresp (dma_phase4_last_bresp),
+  .dma_fifo_dout (dma_fifo_dout),
+  .dma_fifo_empty(dma_fifo_empty),
+  .dma_fifo_pop  (dma_fifo_pop),
   .bus           (bus)
 );
 
@@ -278,6 +284,9 @@ ads1278_axi_slave #(
   .dma_phase4_config_error (dma_phase4_config_error),
   .dma_phase4_bresp_error_pulse (dma_phase4_bresp_error_pulse),
   .dma_phase4_last_bresp (dma_phase4_last_bresp),
+  .dma_fifo_dout (dma_fifo_dout),
+  .dma_fifo_empty(dma_fifo_empty),
+  .dma_fifo_pop  (dma_fifo_pop),
   .bus      (bus        )
 );
 

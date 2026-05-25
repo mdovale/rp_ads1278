@@ -14,13 +14,14 @@ all: server rpdevmem
 server: $(SERVER_SOURCES) $(SERVER_HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SERVER_SOURCES)
 
-rpdevmem: rpdevmem.c memory_map.c memory_map.h protocol.h
+rpdevmem: rpdevmem.c memory_map.c memory_map.h protocol.h dma_frame.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ rpdevmem.c memory_map.c
 
-test: test_cmd_parse test_protocol_layout test_dma_frame_layout
+test: test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map
 	./test_cmd_parse
 	./test_protocol_layout
 	./test_dma_frame_layout
+	./test_memory_map
 
 test_cmd_parse: tests/test_cmd_parse.c cmd_parse.c cmd_parse.h protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_cmd_parse.c cmd_parse.c
@@ -31,5 +32,8 @@ test_protocol_layout: tests/test_protocol_layout.c protocol.h
 test_dma_frame_layout: tests/test_dma_frame_layout.c dma_frame.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_dma_frame_layout.c
 
+test_memory_map: tests/test_memory_map.c memory_map.h protocol.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_memory_map.c
+
 clean:
-	rm -f server rpdevmem test_cmd_parse test_protocol_layout test_dma_frame_layout
+	rm -f server rpdevmem test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map

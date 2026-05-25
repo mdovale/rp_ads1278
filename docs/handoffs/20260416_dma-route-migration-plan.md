@@ -233,6 +233,12 @@ Success criteria:
 - software can clearly tell which buffer is full,
 - hardware never overwrites a buffer still owned by software without an explicit overflow indication.
 
+Implementation note:
+
+- Phase 6 has been staged around the existing Phase 4 HP0 pattern writer. `DMA_BUF_SIZE` is now treated as one ping-pong buffer size: buffer 0 starts at `DMA_BASE_ADDR`, buffer 1 starts at `DMA_BASE_ADDR + DMA_BUF_SIZE`.
+- `DMA_BUF_STATUS` reports buffer 0 full, buffer 1 full, active hardware buffer, and overwrite-pending state. Software clears consumed buffers with `DMA_BUF_ACK`.
+- If hardware advances into a buffer that is still marked full, `DMA_OVERWRITE_COUNT` increments and the overwrite IRQ/status bit is set. This makes ownership violations explicit during bring-up while the full ADC FIFO-to-DDR path is still pending.
+
 ### Phase 7. Validate DDR writes with synthetic data first
 
 Goal:
@@ -267,6 +273,13 @@ Success criteria:
 - frame counts in DDR increase monotonically,
 - software can detect whether any frames were dropped between capture and memory,
 - the data no longer shows the polling-driven `+2` pattern caused by the current server loop.
+
+Implementation note:
+
+- `DMA_CTRL` mode `1` selects capture (`ads1278_dma_fifo_axis` + acquisition FIFO pop). Mode `0` remains the synthetic pattern writer.
+- `ads1278_acq_top` exports `dma_fifo_dout` / `dma_fifo_empty` / `dma_fifo_pop` to `ads1278_dma_phase4` through `red_pitaya_top`.
+- On-target: enable acquisition (`CTRL` bit 1), set `DMA_CTRL` to `0x3` (enable + mode 1), stop DMA, then `rpdevmem dma-frames` to inspect `frame_count` gaps. Watch `FIFO_DROPS` if the FIFO outruns DDR.
+- **DDR stride:** each logical frame is stored on a **128-byte** boundary (40-byte payload + zero padding + canary) so one record matches one HP0 burst. See `docs/feats/dma-frame-record.md` and `docs/handoffs/20260524_dma-frame-burst-alignment.md`.
 
 ### Phase 9. Update the server to consume DMA buffers
 

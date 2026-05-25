@@ -3,6 +3,7 @@
 .DS_Store
 .reference
 reference/
+rpll/
 .cursor/rules/rp-mmio-addressing.mdc
 
 # Build outputs
@@ -18,6 +19,8 @@ server/server
 server/rpdevmem
 server/test_cmd_parse
 server/test_protocol_layout
+server/test_dma_frame_layout
+server/test_memory_map
 
 # Client build and cache artifacts
 .venv/
