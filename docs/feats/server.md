@@ -1,15 +1,15 @@
 # Server
 
-This doc covers the current `server/` layer in `rp_ads1278`: a minimal Red Pitaya user-space process that maps the FPGA MMIO block, accepts one TCP client, and streams the latest coherent ADS1278 snapshot over a fixed binary protocol.
+This doc covers the current `server/` layer in `rp_ads1278`: a Red Pitaya user-space process that maps the FPGA MMIO block, accepts one TCP client, and streams ADS1278 samples over a fixed binary protocol. It supports both legacy latest-sample MMIO streaming and an opt-in DMA-backed buffer consumer.
 
 ## Goal
 
-Provide a small, documented bring-up server that can control acquisition, expose current FPGA state over TCP, and unblock client development without changing the current FPGA/MMIO contract.
+Provide a small, documented bring-up server that can control acquisition, expose current FPGA state over TCP, and consume completed DMA ping-pong buffers without changing the current client wire format.
 
 ## Scope
 
-- In scope: local `server/` sources, build and deploy entry points, the single-client runtime model, command handling, and the current MMIO-polling limitations.
-- Out of scope: DMA, lossless recording, multi-client fanout, Linux service management, and any host-side GUI behavior beyond the documented wire protocol.
+- In scope: local `server/` sources, build and deploy entry points, the single-client runtime model, command handling, legacy MMIO streaming, and DMA ping-pong buffer consumption.
+- Out of scope: a bulk TCP protocol revision, multi-client fanout, Linux service management, and any host-side GUI behavior beyond the documented wire protocol.
 
 ## User-facing behavior
 
@@ -30,14 +30,16 @@ Current runtime behavior is:
 - The listener accepts one TCP client at a time on port `5000`.
 - On connect, the server sends `RP_CAP:ads1278_v2\n`, then one initial `SAMPLE` message built from the latest coherent snapshot.
 - While a client is connected, the server schedules MMIO checks from the current `EXTCLK_DIV` so the wake cadence targets about `2 * f_data`, capped by the configured `--poll-ms` maximum wait, and emits a new `SAMPLE` only when `frame_cnt` changes.
+- With `--dma`, the server arms DMA capture mode, watches `DMA_BUF_STATUS`, maps both ping-pong DDR buffers, emits one existing 64-byte `SAMPLE` per valid 128-byte DMA frame, and writes `DMA_BUF_ACK` after each consumed buffer.
 - Valid commands are applied immediately and answered with an `ACK`.
 - Invalid commands are answered with an `ERROR`.
 - `ACK` and `ERROR` messages still include the latest coherent snapshot so the client does not need a second read path.
 
 Current limitations are explicit:
 
-- This is a latest-sample streamer, not a lossless transport.
-- High acquisition rates can skip intermediate frames because software only observes the newest register-bank contents.
+- Legacy mode is a latest-sample streamer, not a lossless transport.
+- High acquisition rates can skip intermediate frames in legacy mode because software only observes the newest register-bank contents.
+- DMA mode still sends one `SAMPLE` per frame over the existing protocol; a true bulk transport is a later protocol step.
 - `overflow` is a sticky overlap flag from the FPGA pipeline, not a count of missed TCP messages.
 - `frame_cnt` is 16-bit and will wrap.
 - `SYNC` acknowledgement is software-level only because `CTRL[0]` auto-clears in hardware.
@@ -46,7 +48,7 @@ Current limitations are explicit:
 
 The current server is intentionally split into a few small files:
 
-1. `server.c` owns process startup, signal handling, the one-client accept loop, socket I/O, MMIO writes for commands, and `SAMPLE`/`ACK`/`ERROR` emission.
+1. `server.c` owns process startup, signal handling, the one-client accept loop, socket I/O, MMIO writes for commands, optional DMA buffer ownership, and `SAMPLE`/`ACK`/`ERROR` emission.
 2. `memory_map.c` owns `/dev/mem` mapping, register offsets, 32-bit access helpers, 24-bit sign extension, and coherent snapshot reads keyed on `frame_cnt`.
 3. `cmd_parse.c` owns partial socket buffering and fixed 8-byte command assembly plus opcode/value validation.
 4. `protocol.h` owns the fixed 8-byte command shape, the fixed 64-byte message shape, and protocol constants such as the capability line, port, and opcodes.
@@ -60,12 +62,22 @@ The snapshot flow matches the current RTL contract:
 4. Treat the snapshot as coherent only when the two `frame_cnt` values match.
 5. If retries fail, keep the last stable snapshot and increment a local debug counter.
 
+The DMA flow is opt-in with `ads1278-server --dma`:
+
+1. Open buffer 0 at `DMA_BASE_ADDR` and buffer 1 at `DMA_BASE_ADDR + DMA_BUF_SIZE`.
+2. On client connect, program `DMA_BASE_ADDR` / `DMA_BUF_SIZE`, clear stale IRQ/full bits, and write `DMA_CTRL = 0x3` for capture mode.
+3. Poll `DMA_BUF_STATUS` for full ping-pong buffers.
+4. Before parsing a full buffer, sync the DDR mapping for CPU reads and use the canary phase (`0xAD127831`) to find the first complete 128-byte record.
+5. Emit one legacy `SAMPLE` message per valid DMA frame, then write the matching `DMA_BUF_ACK` bit.
+6. Stop DMA when the client disconnects.
+
 ## Known risk areas
 
 - The server still polls in user space, so it is not a final throughput architecture even though the wake cadence now follows `EXTCLK_DIV`.
 - `new_data` is pulse-style and is not used as the primary emission trigger.
 - Divider writes affect EXTCLK generation, SPI timing, and SYNC pulse width together because that is the current FPGA contract.
 - The server assumes a little-endian host, which matches the current Red Pitaya target and the documented protocol.
+- DMA mode requires page-aligned `--dma-base` and page-sized `--dma-size`; defaults are `0x1e000000` and `0x00010000`.
 
 ## Manual QA
 
@@ -75,6 +87,7 @@ The snapshot flow matches the current RTL contract:
 - `./server-build-docker.sh`
 - `./server-deploy.sh --ip <host>`
 - Run `ads1278-server` on the board and confirm the first bytes on connect are the capability line followed by a 64-byte binary message.
+- Run `ads1278-server --dma` on the board, connect one client, and confirm `DMA_OVERWRITE_COUNT` stays flat while buffers are ACKed.
 - Send `SET_ENABLE`, `TRIGGER_SYNC`, `SET_EXTCLK_DIV`, and `SET_MOD_DIV` commands and confirm `ACK` messages echo the opcode/value pair and updated snapshot fields.
 
 ## Key files

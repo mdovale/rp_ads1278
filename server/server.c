@@ -1,6 +1,7 @@
 #include "server.h"
 
 #include "cmd_parse.h"
+#include "dma_frame.h"
 #include "protocol.h"
 
 #include <arpa/inet.h>
@@ -11,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -21,7 +23,19 @@
 #endif
 
 typedef struct {
+    int fd;
+    size_t map_size;
+    volatile uint32_t *words;
+} ads1278_ddr_map;
+
+typedef struct {
+    ads1278_ddr_map buffers[2];
+    bool maps_open;
+} ads1278_dma_state;
+
+typedef struct {
     ads1278_mmio mmio;
+    ads1278_dma_state dma;
     ads1278_snapshot snapshot;
     ads1278_cmd_parser parser;
     ads1278_server_stats stats;
@@ -70,13 +84,16 @@ void ads1278_server_options_init(ads1278_server_options *options)
     options->port = (uint16_t)ADS1278_SERVER_PORT;
     options->poll_timeout_ms = ADS1278_SERVER_POLL_TIMEOUT_MS;
     options->snapshot_retries = ADS1278_SNAPSHOT_RETRY_LIMIT;
+    options->dma_mode = false;
+    options->dma_base_addr = ADS1278_DMA_PHASE4_DDR_BASE;
+    options->dma_buf_size = ADS1278_DMA_PHASE4_DDR_SIZE;
 }
 
 void ads1278_server_print_usage(FILE *stream, const char *argv0)
 {
     fprintf(
         stream,
-        "Usage: %s [--port N] [--mem-path PATH] [--poll-ms N] [--snapshot-retries N]\n",
+        "Usage: %s [--port N] [--mem-path PATH] [--poll-ms N] [--snapshot-retries N] [--dma] [--dma-base ADDR] [--dma-size BYTES]\n",
         argv0
     );
 }
@@ -119,6 +136,25 @@ static int ads1278_parse_uint(const char *text, unsigned int *out_value)
     return 0;
 }
 
+static int ads1278_parse_u32(const char *text, uint32_t *out_value)
+{
+    unsigned long value;
+    char *end_ptr;
+
+    if (text == NULL || out_value == NULL) {
+        return -1;
+    }
+
+    errno = 0;
+    value = strtoul(text, &end_ptr, 0);
+    if (errno != 0 || end_ptr == text || *end_ptr != '\0' || value > 0xfffffffful) {
+        return -1;
+    }
+
+    *out_value = (uint32_t)value;
+    return 0;
+}
+
 static int ads1278_set_nonblocking(int fd)
 {
     int flags;
@@ -132,6 +168,152 @@ static int ads1278_set_nonblocking(int fd)
     }
 
     return 0;
+}
+
+static void ads1278_dma_state_init(ads1278_dma_state *dma)
+{
+    if (dma == NULL) {
+        return;
+    }
+
+    memset(dma, 0, sizeof(*dma));
+    dma->buffers[0].fd = -1;
+    dma->buffers[1].fd = -1;
+}
+
+/*
+ * PL HP0 writes are not L1-coherent on Zynq. Match the devmem helper and
+ * invalidate the CPU view before parsing DDR frames.
+ */
+static void ads1278_ddr_sync_for_cpu(void *addr, size_t len)
+{
+#if defined(__aarch64__) || defined(__arm__)
+    __builtin___clear_cache((char *)addr, (char *)addr + len);
+#endif
+    __sync_synchronize();
+}
+
+static int ads1278_validate_dma_options(const ads1278_server_options *options)
+{
+    long page_size;
+
+    if (options == NULL || options->dma_buf_size == 0u) {
+        errno = EINVAL;
+        return -1;
+    }
+    if ((options->dma_buf_size % ADS1278_DMA_FRAME_SIZE) != 0u) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) {
+        page_size = 4096;
+    }
+    if ((options->dma_base_addr % (uint32_t)page_size) != 0u
+        || (options->dma_buf_size % (uint32_t)page_size) != 0u) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int ads1278_ddr_open_map(
+    ads1278_ddr_map *ddr,
+    const char *path,
+    uint32_t base_addr,
+    uint32_t buffer_size
+)
+{
+    const char *open_path;
+    void *mapped;
+
+    if (ddr == NULL || buffer_size == 0u) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    open_path = (path != NULL) ? path : ADS1278_MMIO_DEFAULT_PATH;
+    memset(ddr, 0, sizeof(*ddr));
+    ddr->fd = open(open_path, O_RDWR | O_SYNC);
+    if (ddr->fd < 0) {
+        return -1;
+    }
+
+    ddr->map_size = buffer_size;
+    mapped = mmap(NULL, ddr->map_size, PROT_READ | PROT_WRITE, MAP_SHARED, ddr->fd, base_addr);
+    if (mapped == MAP_FAILED) {
+        int saved_errno = errno;
+        close(ddr->fd);
+        ddr->fd = -1;
+        errno = saved_errno;
+        return -1;
+    }
+
+    ddr->words = (volatile uint32_t *)mapped;
+    return 0;
+}
+
+static void ads1278_ddr_close_map(ads1278_ddr_map *ddr)
+{
+    if (ddr == NULL) {
+        return;
+    }
+    if (ddr->words != NULL) {
+        munmap((void *)ddr->words, ddr->map_size);
+        ddr->words = NULL;
+    }
+    if (ddr->fd >= 0) {
+        close(ddr->fd);
+        ddr->fd = -1;
+    }
+    ddr->map_size = 0u;
+}
+
+static int ads1278_dma_open_buffers(
+    ads1278_dma_state *dma,
+    const ads1278_server_options *options
+)
+{
+    uint32_t buffer1_addr;
+
+    if (dma == NULL || options == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ads1278_validate_dma_options(options) != 0) {
+        return -1;
+    }
+
+    buffer1_addr = options->dma_base_addr + options->dma_buf_size;
+    if (buffer1_addr < options->dma_base_addr) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (ads1278_ddr_open_map(&dma->buffers[0], options->mem_path, options->dma_base_addr, options->dma_buf_size) != 0) {
+        return -1;
+    }
+    if (ads1278_ddr_open_map(&dma->buffers[1], options->mem_path, buffer1_addr, options->dma_buf_size) != 0) {
+        int saved_errno = errno;
+        ads1278_ddr_close_map(&dma->buffers[0]);
+        errno = saved_errno;
+        return -1;
+    }
+
+    dma->maps_open = true;
+    return 0;
+}
+
+static void ads1278_dma_close_buffers(ads1278_dma_state *dma)
+{
+    if (dma == NULL) {
+        return;
+    }
+    ads1278_ddr_close_map(&dma->buffers[0]);
+    ads1278_ddr_close_map(&dma->buffers[1]);
+    dma->maps_open = false;
 }
 
 static int ads1278_get_monotonic_time(struct timespec *now)
@@ -274,6 +456,22 @@ int ads1278_server_parse_args(int argc, char **argv, ads1278_server_options *opt
             }
             continue;
         }
+        if (strcmp(argv[index], "--dma") == 0) {
+            options->dma_mode = true;
+            continue;
+        }
+        if (strcmp(argv[index], "--dma-base") == 0) {
+            if ((index + 1) >= argc || ads1278_parse_u32(argv[++index], &options->dma_base_addr) != 0) {
+                return -1;
+            }
+            continue;
+        }
+        if (strcmp(argv[index], "--dma-size") == 0) {
+            if ((index + 1) >= argc || ads1278_parse_u32(argv[++index], &options->dma_buf_size) != 0) {
+                return -1;
+            }
+            continue;
+        }
         return -1;
     }
 
@@ -293,6 +491,19 @@ static int ads1278_send_all(int fd, const void *buffer, size_t size_bytes)
         sent = send(fd, cursor, remaining, MSG_NOSIGNAL);
         if (sent < 0) {
             if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                fd_set write_fds;
+
+                FD_ZERO(&write_fds);
+                FD_SET(fd, &write_fds);
+                if (select(fd + 1, NULL, &write_fds, NULL, NULL) < 0) {
+                    if (errno == EINTR && g_stop_requested == 0) {
+                        continue;
+                    }
+                    return -1;
+                }
                 continue;
             }
             return -1;
@@ -366,6 +577,34 @@ static int ads1278_refresh_snapshot(
     return 0;
 }
 
+static void ads1278_refresh_control_fields(ads1278_server_state *state)
+{
+    state->snapshot.ctrl_raw = ads1278_mmio_read32(&state->mmio, ADS1278_REG_CTRL);
+    state->snapshot.extclk_div = ads1278_mmio_read32(&state->mmio, ADS1278_REG_EXTCLK_DIV);
+    state->snapshot.mod_div = ads1278_mmio_read32(&state->mmio, ADS1278_REG_MOD_DIV);
+}
+
+static int ads1278_refresh_state_for_response(
+    ads1278_server_state *state,
+    bool dma_mode,
+    unsigned int snapshot_retries
+)
+{
+    if (!dma_mode) {
+        return ads1278_refresh_snapshot(state, snapshot_retries);
+    }
+
+    /*
+     * In DMA mode, avoid turning command ACKs into latest-sample MMIO reads.
+     * Channel fields remain the last DMA frame; control fields come from MMIO.
+     */
+    state->snapshot.status_raw = ads1278_mmio_read32(&state->mmio, ADS1278_REG_STATUS);
+    state->snapshot.frame_cnt = ads1278_status_frame_count(state->snapshot.status_raw);
+    ads1278_refresh_control_fields(state);
+    state->have_snapshot = true;
+    return 0;
+}
+
 static void ads1278_fill_message(
     ads1278_server_state *state,
     ads1278_message *message,
@@ -403,6 +642,11 @@ static int ads1278_send_snapshot_message(
     ads1278_fill_message(state, &message, msg_type, opcode, value);
     return ads1278_send_all(client_fd, &message, sizeof(message));
 }
+
+static int ads1278_dma_arm(
+    ads1278_server_state *state,
+    const ads1278_server_options *options
+);
 
 static uint32_t ads1278_build_enable_ctrl(uint32_t ctrl_raw, uint32_t enable_value)
 {
@@ -465,6 +709,7 @@ static void ads1278_reset_client_state(ads1278_server_state *state)
 static int ads1278_handle_new_client(
     int client_fd,
     ads1278_server_state *state,
+    const ads1278_server_options *options,
     unsigned int snapshot_retries
 )
 {
@@ -481,6 +726,11 @@ static int ads1278_handle_new_client(
     }
 
     state->last_streamed_frame_cnt = state->snapshot.frame_cnt;
+    if (options->dma_mode) {
+        if (ads1278_dma_arm(state, options) != 0) {
+            return -1;
+        }
+    }
     return 0;
 }
 
@@ -488,6 +738,7 @@ static int ads1278_handle_command(
     int client_fd,
     ads1278_server_state *state,
     const ads1278_command *command,
+    bool dma_mode,
     unsigned int snapshot_retries
 )
 {
@@ -496,7 +747,7 @@ static int ads1278_handle_command(
     validation_result = ads1278_command_validate(command);
     if (validation_result == ADS1278_CMD_VALID) {
         ads1278_apply_command(state, command);
-        if (ads1278_refresh_snapshot(state, snapshot_retries) != 0) {
+        if (ads1278_refresh_state_for_response(state, dma_mode, snapshot_retries) != 0) {
             return -1;
         }
         state->stats.accepted_commands += 1u;
@@ -510,7 +761,7 @@ static int ads1278_handle_command(
             return -1;
         }
     } else {
-        if (ads1278_refresh_snapshot(state, snapshot_retries) != 0) {
+        if (ads1278_refresh_state_for_response(state, dma_mode, snapshot_retries) != 0) {
             return -1;
         }
         state->stats.rejected_commands += 1u;
@@ -538,6 +789,7 @@ static int ads1278_consume_socket_bytes(
     ads1278_server_state *state,
     const uint8_t *buffer,
     size_t buffer_len,
+    bool dma_mode,
     unsigned int snapshot_retries
 )
 {
@@ -558,7 +810,7 @@ static int ads1278_consume_socket_bytes(
         );
         offset += consumed;
         if (have_command != 0) {
-            if (ads1278_handle_command(client_fd, state, &command, snapshot_retries) != 0) {
+            if (ads1278_handle_command(client_fd, state, &command, dma_mode, snapshot_retries) != 0) {
                 return -1;
             }
         }
@@ -570,6 +822,7 @@ static int ads1278_consume_socket_bytes(
 static int ads1278_service_client_socket(
     int client_fd,
     ads1278_server_state *state,
+    bool dma_mode,
     unsigned int snapshot_retries
 )
 {
@@ -599,6 +852,7 @@ static int ads1278_service_client_socket(
                 state,
                 buffer,
                 (size_t)recv_result,
+                dma_mode,
                 snapshot_retries
             ) != 0) {
             return -1;
@@ -627,9 +881,183 @@ static int ads1278_maybe_send_sample(
     return 0;
 }
 
-static void ads1278_close_client(int *client_fd)
+static int ads1278_dma_arm(
+    ads1278_server_state *state,
+    const ads1278_server_options *options
+)
+{
+    uint32_t dma_ctrl;
+
+    if (state == NULL || options == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_CTRL, 0u);
+    ads1278_mmio_write32(
+        &state->mmio,
+        ADS1278_REG_DMA_IRQ_ACK,
+        ADS1278_DMA_IRQ_WRAP | ADS1278_DMA_IRQ_ERROR | ADS1278_DMA_IRQ_CONFIG | ADS1278_DMA_IRQ_OVERWRITE
+    );
+    ads1278_mmio_write32(
+        &state->mmio,
+        ADS1278_REG_DMA_BUF_ACK,
+        ADS1278_DMA_BUF_ACK_BUF0 | ADS1278_DMA_BUF_ACK_BUF1
+    );
+    ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_BASE_ADDR, options->dma_base_addr);
+    ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_BUF_SIZE, options->dma_buf_size);
+
+    dma_ctrl = ADS1278_DMA_CTRL_ENABLE
+        | (ADS1278_DMA_MODE_CAPTURE << ADS1278_DMA_CTRL_MODE_SHIFT);
+    ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_CTRL, dma_ctrl);
+    return 0;
+}
+
+static void ads1278_dma_stop(ads1278_server_state *state)
+{
+    if (state == NULL) {
+        return;
+    }
+    ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_CTRL, 0u);
+}
+
+static int ads1278_dma_find_frame_start_word(
+    const ads1278_ddr_map *ddr,
+    size_t *frame_start_word
+)
+{
+    size_t word_count;
+    size_t index;
+
+    if (ddr == NULL || frame_start_word == NULL || ddr->words == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    word_count = ddr->map_size / sizeof(uint32_t);
+    for (index = 0u; index < word_count; ++index) {
+        if (ddr->words[index] == ADS1278_DMA_FRAME_STRIDE_CANARY) {
+            *frame_start_word = (index + 1u) % ADS1278_DMA_FRAME_WORDS;
+            return 0;
+        }
+    }
+
+    errno = EIO;
+    return -1;
+}
+
+static bool ads1278_dma_frame_words_valid(const volatile uint32_t *words)
+{
+    size_t index;
+
+    if (words == NULL) {
+        return false;
+    }
+    for (index = ADS1278_DMA_FRAME_PAYLOAD_WORDS; index < (ADS1278_DMA_FRAME_WORDS - 1u); ++index) {
+        if (words[index] != 0u) {
+            return false;
+        }
+    }
+    return words[ADS1278_DMA_FRAME_WORDS - 1u] == ADS1278_DMA_FRAME_STRIDE_CANARY;
+}
+
+static void ads1278_snapshot_from_dma_words(
+    ads1278_server_state *state,
+    const volatile uint32_t *words
+)
+{
+    unsigned int channel;
+
+    state->snapshot.status_raw = words[1];
+    state->snapshot.frame_cnt = (uint16_t)words[0];
+    for (channel = 0u; channel < ADS1278_CHANNEL_COUNT; ++channel) {
+        state->snapshot.channels[channel] = (int32_t)words[2u + channel];
+    }
+    state->have_snapshot = true;
+}
+
+static int ads1278_send_dma_buffer(
+    int client_fd,
+    ads1278_server_state *state,
+    unsigned int buffer_index
+)
+{
+    ads1278_ddr_map *ddr;
+    size_t frame_start_word;
+    size_t word_count;
+    size_t frame_count;
+    size_t frame_index;
+    uint32_t ack_mask;
+
+    if (state == NULL || buffer_index > 1u || !state->dma.maps_open) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ddr = &state->dma.buffers[buffer_index];
+    ads1278_ddr_sync_for_cpu((void *)ddr->words, ddr->map_size);
+    if (ads1278_dma_find_frame_start_word(ddr, &frame_start_word) != 0) {
+        return -1;
+    }
+
+    word_count = ddr->map_size / sizeof(uint32_t);
+    frame_count = (word_count - frame_start_word) / ADS1278_DMA_FRAME_WORDS;
+    ads1278_refresh_control_fields(state);
+
+    for (frame_index = 0u; frame_index < frame_count; ++frame_index) {
+        size_t word_index;
+        const volatile uint32_t *words;
+
+        word_index = frame_start_word + (frame_index * ADS1278_DMA_FRAME_WORDS);
+        words = &ddr->words[word_index];
+        if (!ads1278_dma_frame_words_valid(words)) {
+            state->stats.dma_bad_frames += 1u;
+            continue;
+        }
+
+        ads1278_snapshot_from_dma_words(state, words);
+        if (ads1278_send_snapshot_message(client_fd, state, ADS1278_MSG_SAMPLE, 0u, 0u) != 0) {
+            return -1;
+        }
+        state->last_streamed_frame_cnt = state->snapshot.frame_cnt;
+        state->stats.dma_frames_streamed += 1u;
+    }
+
+    ack_mask = (buffer_index == 0u) ? ADS1278_DMA_BUF_ACK_BUF0 : ADS1278_DMA_BUF_ACK_BUF1;
+    ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_BUF_ACK, ack_mask);
+    state->stats.dma_buffers_consumed += 1u;
+    return 0;
+}
+
+static int ads1278_service_dma_buffers(int client_fd, ads1278_server_state *state)
+{
+    uint32_t buf_status;
+
+    buf_status = ads1278_mmio_read32(&state->mmio, ADS1278_REG_DMA_BUF_STATUS);
+    if ((buf_status & ADS1278_DMA_BUF_STATUS_BUF0_FULL) != 0u) {
+        if (ads1278_send_dma_buffer(client_fd, state, 0u) != 0) {
+            return -1;
+        }
+    }
+    if ((buf_status & ADS1278_DMA_BUF_STATUS_BUF1_FULL) != 0u) {
+        if (ads1278_send_dma_buffer(client_fd, state, 1u) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static void ads1278_close_client(
+    int *client_fd,
+    ads1278_server_state *state,
+    bool dma_mode
+)
 {
     if (*client_fd >= 0) {
+        if (dma_mode) {
+            ads1278_dma_stop(state);
+        }
         close(*client_fd);
         *client_fd = -1;
     }
@@ -645,6 +1073,7 @@ int ads1278_server_run(const ads1278_server_options *options)
 
     memset(&state, 0, sizeof(state));
     state.mmio.fd = -1;
+    ads1278_dma_state_init(&state.dma);
     ads1278_cmd_parser_init(&state.parser);
     listener_fd = -1;
     client_fd = -1;
@@ -663,15 +1092,27 @@ int ads1278_server_run(const ads1278_server_options *options)
         ads1278_mmio_close(&state.mmio);
         return EXIT_FAILURE;
     }
-
-    listener_fd = ads1278_make_listener(options->port);
-    if (listener_fd < 0) {
-        perror("listen");
+    if (options->dma_mode && ads1278_dma_open_buffers(&state.dma, options) != 0) {
+        perror("open DMA buffers");
         ads1278_mmio_close(&state.mmio);
         return EXIT_FAILURE;
     }
 
-    fprintf(stderr, "Listening on port %u using %s\n", (unsigned int)options->port, options->mem_path);
+    listener_fd = ads1278_make_listener(options->port);
+    if (listener_fd < 0) {
+        perror("listen");
+        ads1278_dma_close_buffers(&state.dma);
+        ads1278_mmio_close(&state.mmio);
+        return EXIT_FAILURE;
+    }
+
+    fprintf(
+        stderr,
+        "Listening on port %u using %s%s\n",
+        (unsigned int)options->port,
+        options->mem_path,
+        options->dma_mode ? " (DMA mode)" : ""
+    );
 
     while (g_stop_requested == 0) {
         fd_set read_fds;
@@ -693,15 +1134,22 @@ int ads1278_server_run(const ads1278_server_options *options)
             FD_SET(client_fd, &read_fds);
             max_fd = client_fd;
 
-            if (!next_sample_deadline_valid) {
+            if (options->dma_mode) {
+                timeout_ns = (uint64_t)options->poll_timeout_ms * ADS1278_NS_PER_MS;
+                if (timeout_ns == 0u) {
+                    timeout_ns = ADS1278_NS_PER_MS;
+                }
+            } else if (!next_sample_deadline_valid) {
                 if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
                     perror("clock_gettime");
                     break;
                 }
                 next_sample_deadline_valid = true;
+                timeout_ns = ads1278_time_until_deadline_ns(&next_sample_deadline);
+            } else {
+                timeout_ns = ads1278_time_until_deadline_ns(&next_sample_deadline);
             }
 
-            timeout_ns = ads1278_time_until_deadline_ns(&next_sample_deadline);
             ads1278_ns_to_timeval(timeout_ns, &timeout);
             timeout_ptr = &timeout;
         }
@@ -727,56 +1175,65 @@ int ads1278_server_run(const ads1278_server_options *options)
                 }
                 if (ads1278_set_nonblocking(client_fd) != 0) {
                     perror("fcntl");
-                    ads1278_close_client(&client_fd);
+                    ads1278_close_client(&client_fd, &state, options->dma_mode);
                     continue;
                 }
-                if (ads1278_handle_new_client(client_fd, &state, options->snapshot_retries) != 0) {
+                if (ads1278_handle_new_client(client_fd, &state, options, options->snapshot_retries) != 0) {
                     perror("client setup");
-                    ads1278_close_client(&client_fd);
-                } else if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
+                    ads1278_close_client(&client_fd, &state, options->dma_mode);
+                } else if (!options->dma_mode
+                    && ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
                     perror("clock_gettime");
-                    ads1278_close_client(&client_fd);
+                    ads1278_close_client(&client_fd, &state, options->dma_mode);
                 } else {
-                    next_sample_deadline_valid = true;
+                    next_sample_deadline_valid = !options->dma_mode;
                 }
             }
             continue;
         }
 
         if (select_result > 0 && FD_ISSET(client_fd, &read_fds)) {
-            if (ads1278_service_client_socket(client_fd, &state, options->snapshot_retries) != 0) {
-                ads1278_close_client(&client_fd);
+            if (ads1278_service_client_socket(client_fd, &state, options->dma_mode, options->snapshot_retries) != 0) {
+                ads1278_close_client(&client_fd, &state, options->dma_mode);
                 next_sample_deadline_valid = false;
                 continue;
             }
-            if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
+            if (!options->dma_mode
+                && ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
                 perror("clock_gettime");
-                ads1278_close_client(&client_fd);
+                ads1278_close_client(&client_fd, &state, options->dma_mode);
                 next_sample_deadline_valid = false;
                 continue;
             }
-            next_sample_deadline_valid = true;
+            next_sample_deadline_valid = !options->dma_mode;
         }
 
-        if (next_sample_deadline_valid && ads1278_time_until_deadline_ns(&next_sample_deadline) == 0u) {
+        if (options->dma_mode) {
+            if (ads1278_service_dma_buffers(client_fd, &state) != 0) {
+                ads1278_close_client(&client_fd, &state, options->dma_mode);
+                next_sample_deadline_valid = false;
+                continue;
+            }
+        } else if (next_sample_deadline_valid && ads1278_time_until_deadline_ns(&next_sample_deadline) == 0u) {
             if (ads1278_maybe_send_sample(client_fd, &state, options->snapshot_retries) != 0) {
-                    ads1278_close_client(&client_fd);
-                    next_sample_deadline_valid = false;
-                    continue;
+                ads1278_close_client(&client_fd, &state, options->dma_mode);
+                next_sample_deadline_valid = false;
+                continue;
             }
             if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
                 perror("clock_gettime");
-                ads1278_close_client(&client_fd);
+                ads1278_close_client(&client_fd, &state, options->dma_mode);
                 next_sample_deadline_valid = false;
                 continue;
             }
         }
     }
 
-    ads1278_close_client(&client_fd);
+    ads1278_close_client(&client_fd, &state, options->dma_mode);
     if (listener_fd >= 0) {
         close(listener_fd);
     }
+    ads1278_dma_close_buffers(&state.dma);
     ads1278_mmio_close(&state.mmio);
     return EXIT_SUCCESS;
 }

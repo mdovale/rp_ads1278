@@ -1,16 +1,69 @@
 # DMA frame DDR stride — problem, fixes, and bring-up status
 
-**Date:** 2026-05-24  
+**Date:** 2026-05-24 (updated 2026-05-27)  
 **Blocks:** Phase 8 validation (capture FIFO → DDR), Phase 9 server DDR consumer  
-**Status:** Fix implemented in repo; on-target parse test **not yet passing** — see [Open issues](#open-issues-on-target)
+**Status:** **Phase 8 parse + drop tests passed on-target** (`rp-f0ef77`, May 2026). Initial Phase 9 server DDR consumer is implemented; on-target server validation is next.
 
 ---
 
 ## Summary
 
-Phase 8 proved that **live ADC data reaches DDR** (capture mode, `FIFO_DROPS` often 0, plausible `ch1` values). The blocker for calling Phase 8 “done” is **software cannot yet trust `dma-frames` output**: `pad=BAD`, `gap ≠ 1`, and canary `0xAD127831` not seen at word 31.
+Early Phase 8 runs showed **live ADC data in DDR** but **`dma-frames` misparse** (`pad=BAD`, `gap ≠ 1`) because host tools stepped the **40-byte payload** while the HP0 writer commits **128-byte bursts**.
 
-That is **not** the same as “capture is broken.” It is a **DDR layout vs parser stride** problem (and possibly **Zynq cache coherency** and **bring-up tooling**). The payload format (40 bytes, 10 words) is correct; the **DDR stride** must match how the PL stream writer packs bytes.
+The **128-byte stride + canary** fix in RTL and `devmem` (`ads1278-rpdevmem`) is validated on hardware:
+
+- **`pad=ok`**, **`gap=1`**, sequential `frame_count` when **`FIFO_DROPS` does not increase**
+- Canary scan finds **`0xAD127831` every 32 words**; first record often starts at **word 30** (`frame_start_phase=30`, canary at word **29**)
+- **5-minute soak** at `EXTCLK_DIV=0x271`: **`FIFO_DROPS` stays 0**; **`DMA_OVERWRITE_COUNT` rises** without software `DMA_BUF_ACK` (expected ping-pong behavior, not ADC FIFO loss)
+
+---
+
+## On-target validation (2026-05, `rp-f0ef77`)
+
+### Short parse test (2 s capture)
+
+| Check | Result |
+|-------|--------|
+| `FIFO_DROPS` delta | **0** |
+| `dma-frames` (64 lines) | **64× `pad=ok`**, **0× `pad=BAD`** |
+| `frame_count` | **1 → 64**, all **`gap=1`** after first line |
+| `dma-scan-canary` | **403 hits**; first at **word[29]**; **`frame_start_phase=30`** |
+| `ddr-read 31` | `0x12540001` — **status word** of frame at word 30, not canary (see below) |
+| `DMA_OVERWRITE_COUNT` | 0 (short run) |
+
+### Long soak (300 s target, `dma-drop-test-long.sh` on board)
+
+`CAPTURE_SEC=300`, `EXTCLK_DIV=0x271`, `DMA_BUF_SIZE=0x10000`. Progress lines every 30 s (script samples while `DMA_CTRL=0x3`):
+
+| Elapsed | FIFO_DROPS | DMA_OVERWRITE_COUNT | DMA_WRAP_COUNT | DMA_WRITE_INDEX |
+|---------|------------|---------------------|----------------|-----------------|
+| 30 s | 0 | 0x0a (10) | 0x0b (11) | 0xfe (254) |
+| 60 s | 0 | 0x15 (21) | 0x16 (22) | 0x1f4 (500) |
+| 90 s | 0 | 0x21 (33) | 0x22 (34) | 0xea (234) |
+
+Raw log excerpt (90 s checkpoint):
+
+```text
+--- Capturing (DMA_CTRL=0x3) for 300s ---
+[  30s] FIFO_DROPS=0x00000000  OVERWRITES=0x0000000a  WRAP_COUNT=0x0000000b  WRITE_INDEX=0x000000fe
+[  60s] FIFO_DROPS=0x00000000  OVERWRITES=0x00000015  WRAP_COUNT=0x00000016  WRITE_INDEX=0x000001f4
+[  90s] FIFO_DROPS=0x00000000  OVERWRITES=0x00000021  WRAP_COUNT=0x00000022  WRITE_INDEX=0x000000ea
+```
+
+Interpretation:
+
+- **`FIFO_DROPS = 0`** throughout the sampled window → staged acquisition FIFO did not lose frames to DDR back-pressure at this rate.
+- **`DMA_OVERWRITE_COUNT` and `DMA_WRAP_COUNT` increase** → ping-pong halves wrap faster than software releases them (**no `DMA_BUF_ACK`** during bring-up). That is **not** the same as `FIFO_DROPS`; Phase 9 must ACK completed buffers on long captures.
+- **`DMA_WRITE_INDEX` wraps** within a 64 KiB buffer (512 frames × 128 B); index alone is not a drop indicator.
+
+### Earlier failed run (context)
+
+| Check | Result |
+|-------|--------|
+| 1 s capture, same divider | `FIFO_DROPS = 0xa53` (2643) |
+| Same session, later 2 s clean script | `FIFO_DROPS` delta **0**, parse **pass** |
+
+Use board-local **`dma-drop-test.sh`** / **`dma-drop-test-long.sh`** (see [Verification procedure](#verification-procedure)). Read **`FIFO_DROPS` before disabling `CTRL`** (counter clears when acquisition is disabled).
 
 ---
 
@@ -23,7 +76,7 @@ ADC → ads1278_acq_top (320-bit FIFO record)
     → ads1278_dma_fifo_axis (32-bit AXI stream)
     → ads1278_dma_phase4 / axis_ram_writer (128-byte HP0 bursts)
     → DDR at DMA_BASE_ADDR
-    → host reads via rpdevmem dma-frames
+    → host reads via devmem dma-frames
 ```
 
 ### Logical frame (unchanged)
@@ -46,9 +99,9 @@ So the DDR image is a **continuous byte stream** of 32-bit words, committed in *
 
 ---
 
-## The problem
+## The problem (historical)
 
-### Symptom (on-target)
+### Symptom (pre-fix, on-target)
 
 After capture mode (`DMA_CTRL = 0x3`) and stopping DMA (`write 0x38 0x0`):
 
@@ -58,7 +111,7 @@ After capture mode (`DMA_CTRL = 0x3`) and stopping DMA (`write 0x38 0x0`):
 | `pad=BAD` on every line | All frames |
 | `gap` not 1 | 25, 134, 192, … |
 | `ddr-read 31` | `0x00020001`, **not** `0xad127831` |
-| Pattern-mode `ddr-dump` | `0x078e0004`, `0x078e0005`, … (not `0,1,2,3`) |
+| Pattern-mode `ddr-dump` | `0x078e0004`, `0x078e0005`, … |
 
 ### Root cause: payload size ≠ burst / parser stride
 
@@ -74,43 +127,23 @@ If the serializer emits **only 10 words per frame** (40 bytes) back-to-back in t
 - Bytes interpreted as “padding” contain **next frame’s payload** → `pad=BAD`.
 - `frame_count` / `status` / `ch1` look plausible but are **misaligned** → chaotic `gap`.
 
-This was confirmed by a key diagnostic:
+Key diagnostic (still useful):
 
 > **`FIFO_DROPS = 0` but `gap ≠ 1`** → not dropped frames; **alignment / parser / stale DDR** issue.
 
-### What is *not* the problem
+### Secondary factors
 
-| Misread | Reality |
-|---------|---------|
-| “ADC dropping frames” (when `FIFO_DROPS = 0`) | Parser stride wrong |
-| “Phase 8 capture dead” | `dma_running`, real `ch1`, `dma_write_index` grows |
-| “`0x078e0004` pattern test failed” | Pattern path works; `ddr-dump` shows 32-bit view of 64-bit-packed stream |
-| Old pattern residue only | Stale DDR + misalignment can mimic pattern-like words |
-
-### Secondary factors (also break bring-up)
-
-1. **FIFO drops** — at `EXTCLK_DIV = 0x271`, `FIFO_DROPS` was **4271** in one run. Large `gap` between DDR records is **expected** even with correct stride (skipped `frame_cnt` values).
-2. **Zynq cache coherency** — HP0 PL writes are not L1-coherent with Cortex-A9. CPU may read **cached stale DDR** unless invalidated before readback.
-3. **`rpdevmem` DDR mmap** — `mmap(..., base_addr)` requires **4 KiB-aligned** `DMA_BASE_ADDR`. Unaligned base (e.g. `0x1e000800`) → `open ddr: Invalid argument`. `DMA_BUF_SIZE == 0` → same error.
-4. **Deployed binary** — `server-deploy.sh` installs `/usr/local/bin/ads1278-rpdevmem`. Shell alias `devmem` may point at an **older** binary without 128-byte layout / cache sync / canary check.
-5. **Stale DDR** — reading without a fresh capture, or reading before the writer filled the first 128 bytes, shows zeros or old pattern data at the buffer head.
+1. **FIFO drops** — large `FIFO_DROPS` with fast capture → real loss before DDR; `gap` in DDR may exceed 1 even with correct stride.
+2. **Zynq cache coherency** — `__builtin___clear_cache()` on mmap’d DDR in `rpdevmem.c`.
+3. **DDR mmap** — `DMA_BASE_ADDR` must be **4 KiB-aligned**; `DMA_BUF_SIZE` non-zero.
+4. **`devmem` alias** — must point at deployed `ads1278-rpdevmem` (`strings … | grep ad127831`).
+5. **Stale DDR** — arm → capture → **stop DMA** → then readback.
 
 ---
 
 ## What we implemented (repo)
 
-### 1. Initial mistake: assuming 40-byte stride in DDR
-
-Early Phase 8 used 10 stream words per frame. Software indexed `frame[i]` every 10 words. That matched the **payload** doc but not the **burst writer** layout → misparse.
-
-### 2. First fix attempt: 64-byte DDR stride (16 stream words)
-
-**RTL:** `ads1278_dma_fifo_axis.v` emitted 16 words: 10 payload + 6 zero pad.  
-**Rationale:** Two records = 128 bytes = one burst.
-
-**On-target:** Still `pad=BAD`, `gap ≠ 1` with `FIFO_DROPS = 0` → 64-byte parser stride still did not match actual DDR byte layout (likely still effectively 40-byte stream in memory and/or cache stale reads).
-
-### 3. Current fix: 128-byte DDR stride (32 stream words) + canary
+### 128-byte DDR stride (32 stream words) + canary
 
 **RTL** (`fpga/rtl/ads1278_dma_fifo_axis.v`):
 
@@ -120,85 +153,22 @@ Early Phase 8 used 10 stream words per frame. Software indexed `frame[i]` every 
 | 10–30 | Zero padding |
 | 31 | Fixed canary **`0xAD127831`** |
 
-**Rationale:** 32 stream words = 128 bytes = one `axis_ram_writer` minimum burst chunk → record *i* at byte offset **`i × 128`** for the life of the buffer.
+**Software** (`server/dma_frame.h`, `server/rpdevmem.c`):
 
-**Software** (`server/dma_frame.h`):
+- `ADS1278_DMA_FRAME_SIZE` = **128**
+- `dma-frames` / `dma-scan-canary`; cache sync before DDR read
+- `dma-frames` uses **`frame_start_phase`** from canary scan (not always word 0)
 
-- `ADS1278_DMA_FRAME_PAYLOAD_SIZE` = 40  
-- `ADS1278_DMA_FRAME_SIZE` = **128**  
-- `ADS1278_DMA_FRAME_STRIDE_CANARY` = `0xAD127831`  
-
-**Bring-up** (`server/rpdevmem.c`):
-
-- `dma-frames` prints `pad=ok` / `pad=BAD` / `pad=LEGACY`
-- `dma-scan-canary` scans buffer for canary hits
-- `__builtin___clear_cache()` on mmap’d DDR before read (Zynq coherency)
-
-**Docs:** `docs/feats/dma-frame-record.md` updated (payload vs stride).
-
-**Tests:** `server/tests/test_dma_frame_layout.c` asserts 128-byte struct layout.
+**Board scripts (on-target only, not yet in repo):** `dma-drop-test.sh`, `dma-drop-test-long.sh`
 
 ### Files touched
 
 | Area | Path |
 |------|------|
 | Serializer | `fpga/rtl/ads1278_dma_fifo_axis.v` |
-| DMA mux | `fpga/rtl/ads1278_dma_phase4.v` (unchanged path; uses `u_capture`) |
-| HP0 writer | `fpga/rtl/axis_ram_writer.v` (unchanged; 128-byte bursts) |
 | C layout | `server/dma_frame.h` |
-| Layout test | `server/tests/test_dma_frame_layout.c` |
 | Bring-up | `server/rpdevmem.c` |
 | Spec | `docs/feats/dma-frame-record.md` |
-| Phase 8 handoff | `docs/handoffs/20260424_phase8-capture-dma.md` |
-| Migration plan | `docs/handoffs/20260416_dma-route-migration-plan.md` (note) |
-
----
-
-## On-target results so far
-
-### What passed (hardware path)
-
-| Check | Seen on `rp-f0f033` |
-|-------|---------------------|
-| Capture mode `dma_mode=1` | Yes |
-| `dma_cfg_error=0`, `dma_error_count=0` | Yes |
-| `dma_overwrites=0` (short tests) | Often |
-| `FIFO_DROPS=0` | In at least one run |
-| `ch1` looks like ADC data | Yes (~480–870) |
-| `dma_write_index` grows | Yes (e.g. 102–130) |
-
-→ **Phase 8 PL path is alive.**
-
-### What failed (parse / bring-up)
-
-| Check | Seen |
-|-------|------|
-| `pad=ok` | Never — always `pad=BAD` |
-| `ddr-read 31` = `0xad127831` | No — e.g. `0x00020001` |
-| `gap=1` with `FIFO_DROPS=0` | No — gaps 25–336 |
-| `dma-scan-canary` | Not verified in logs (needs redeployed `rpdevmem`) |
-| `open ddr: Invalid argument` | Seen when base/size invalid or unaligned |
-
-### Interpretation table (`dma-frames` / `ddr-read`)
-
-| Result | Likely meaning |
-|--------|----------------|
-| `pad=ok`, canary at words 31, 63, … | Stride fix + bitstream + tool OK |
-| `pad=LEGACY` | New `rpdevmem`, **old** bitstream (64-byte era) |
-| `pad=BAD`, no canary in scan | Stale cache, wrong binary, or stream still 40-byte |
-| `gap ≫ 1`, `FIFO_DROPS = 0` | Stride/parser issue |
-| `gap ≫ 1`, `FIFO_DROPS` large | Real drops + possible stride issue |
-| `open ddr: Invalid argument` | Read `0x3c`/`0x40`; fix base alignment and non-zero size |
-
----
-
-## Open issues on-target
-
-1. **Confirm canary in DDR** after fresh capture with redeployed bitstream **and** `ads1278-rpdevmem` (cache sync build).
-2. **Page-aligned DDR mmap** — `rpdevmem` passes `DMA_BASE_ADDR` directly to `mmap` offset; must be multiple of 4096 (`0x1e000000` OK; `0x1e000800` fails).
-3. **`devmem` alias** — verify `which devmem` and `strings … | grep ad127831`.
-4. **Do not read DDR without capture** — always run full arm → capture → stop → readback.
-5. **Phase 8 “formal pass”** blocked until `pad=ok` + `gap=1` (with low `FIFO_DROPS`) on at least one clean run.
 
 ---
 
@@ -206,82 +176,82 @@ Early Phase 8 used 10 stream words per frame. Software indexed `frame[i]` every 
 
 ### Prerequisites
 
-- Rebuild and deploy **FPGA bitstream** (includes `ads1278_dma_fifo_axis.v` 32-beat serializer).
-- Rebuild and deploy **`ads1278-rpdevmem`** (128-byte `dma_frame.h`, cache sync, canary scan).
-
 ```sh
+ln -sf /usr/local/bin/ads1278-rpdevmem /usr/local/bin/devmem
 which devmem
 strings "$(which devmem)" | grep -i ad127831
 ```
 
-### Register setup + capture
+Deploy current **bitstream** and **`ads1278-rpdevmem`** from this repo.
+
+### Quick automated tests
 
 ```sh
-devmem write 0x24 0x2          # acquisition enable
-devmem write 0x28 0x271        # EXTCLK (slow down if FIFO_DROPS high)
+# Copy scripts to board, then:
+chmod +x dma-drop-test.sh dma-drop-test-long.sh
+./dma-drop-test.sh                    # ~2 s, parse + FIFO_DROPS
+CAPTURE_SEC=300 ./dma-drop-test-long.sh   # 5 min soak
+```
+
+### Manual capture + readback
+
+```sh
+devmem write 0x24 0x2
+devmem write 0x28 0x271
 
 devmem write 0x38 0x0
 devmem write 0x58 0xf
-devmem write 0x3c 0x1e000000   # DMA_BASE — must be 4 KiB aligned
-devmem write 0x40 0x00010000   # DMA_BUF_SIZE — must be non-zero
+devmem write 0x3c 0x1e000000
+devmem write 0x40 0x00010000
 
-devmem write 0x38 0x3          # DMA enable + capture mode
-sleep 1
-devmem read 0x30               # FIFO_DROPS — aim for 0
+devmem write 0x38 0x3
+sleep 2
+devmem read 0x30               # FIFO_DROPS — want 0
 
-devmem write 0x38 0x0          # stop before DDR readback
-```
-
-### DDR readback
-
-```sh
-devmem read 0x3c               # sanity: 0x1e000000
-devmem read 0x40               # sanity: 0x00010000
-devmem dma-scan-canary         # hits at word 31, 63, … ?
-devmem ddr-read 31             # expect 0xad127831
+devmem write 0x38 0x0
+devmem dma-scan-canary
+devmem ddr-read 29             # canary when frame_start_phase=30
 devmem dma-frames 16
 ```
 
-### Pass criteria (Phase 8 parse test)
+### Pass criteria (Phase 8)
 
 | # | Criterion |
 |---|-----------|
-| 1 | `dma-scan-canary`: first hit at word **31**, spacing **32** words |
-| 2 | `ddr-read 31` = **`0xad127831`** |
-| 3 | `dma-frames`: **`pad=ok`** on valid frames (skip all-zero `frame[0]`) |
-| 4 | **`gap=1`** between consecutive valid records when `FIFO_DROPS` is low |
-| 5 | Pattern regression: `DMA_CTRL=0x1` → `ddr-dump` shows incrementing stream (not necessarily `0,1,2,3` per 32-bit index) |
+| 1 | `dma-scan-canary`: hits every **32** words; note **`frame_start_phase`** (often **30**) |
+| 2 | `ddr-read` at **first canary word** = **`0xad127831`** (not always word 31) |
+| 3 | `dma-frames`: **`pad=ok`** on captured frames |
+| 4 | **`gap=1`** between consecutive records when **`FIFO_DROPS` delta = 0** |
+| 5 | Long soak: **`FIFO_DROPS` flat**; expect **`DMA_OVERWRITE_COUNT` > 0** without `DMA_BUF_ACK` |
 
-### Pattern mode regression (optional)
+### Interpretation table
 
-```sh
-devmem write 0x24 0x0
-devmem write 0x38 0x1
-sleep 1
-devmem write 0x38 0x0
-devmem ddr-dump 8
-```
-
-Expect monotonic low-byte increment (e.g. `…04, …05, …06`), not `0x078e00xx` capture residue.
+| Result | Likely meaning |
+|--------|----------------|
+| `pad=ok`, `gap=1`, `FIFO_DROPS=0` | Stride + deploy OK |
+| `pad=LEGACY` | New `devmem`, old bitstream (64-byte era) |
+| `pad=BAD`, canary missing | Wrong binary, stale DDR, or pre-128-byte bitstream |
+| `gap ≫ 1`, `FIFO_DROPS = 0` | Parser phase / stale buffer |
+| `gap ≫ 1`, `FIFO_DROPS` large | Real FIFO drops |
+| `OVERWRITES` rise, `FIFO_DROPS = 0` | Ping-pong not ACK'd (Phase 9) |
 
 ---
 
 ## Phase 9 implications
 
-- Server must index ping-pong buffers with **`ADS1278_DMA_FRAME_SIZE` (128)**, not 40 or 64.
-- Invalidate CPU cache (or map uncached) before reading PL-written DDR.
-- Implement **`DMA_BUF_ACK`** loop; separate from stride fix.
-- `ddr-dump` / default mmap at `DMA_BASE_ADDR` only covers buffer 0; buffer 1 needs page-aligned mmap at `base + DMA_BUF_SIZE`.
+- Server indexes buffers with **`ADS1278_DMA_FRAME_SIZE` (128)** and the same **canary phase** logic as `dma-frames`.
+- Cache invalidate (or uncached map) before reading PL-written DDR.
+- Implement **`DMA_BUF_ACK`** loop for long captures; distinguish from **`FIFO_DROPS`**.
+- mmap buffer 1 at `DMA_BASE_ADDR + DMA_BUF_SIZE` (page-aligned).
 
 ---
 
 ## Suggested next steps
 
-1. Redeploy **both** bitstream and `ads1278-rpdevmem`; run [Verification procedure](#verification-procedure) and capture `dma-scan-canary` + `ddr-read 31` output.
-2. If canary **never** appears in scan: confirm Vivado build includes `ads1278_dma_fifo_axis.v` and capture mode uses `u_capture` (not pattern-only path).
-3. If canary appears every 32 words but `dma-frames` still `pad=BAD`: fix tool/binary mismatch.
-4. If `open ddr: Invalid argument` persists: check `read 0x3c` / `read 0x40`; fix page-aligned base in `ads1278_ddr_open` (rpll-style page rounding) — Agent task.
-5. Once `pad=ok` + `gap=1` with low drops: mark Phase 8 parse test **pass**; start Phase 9 ping-pong consumer.
+1. Run `ads1278-server --dma` on target with a client connected and confirm full buffers are ACKed.
+2. Re-run a long soak **with** server ACK and confirm `DMA_OVERWRITE_COUNT` stays flat while `FIFO_DROPS` remains 0.
+3. Optional: page-round DDR mmap in `rpdevmem` for unaligned `DMA_BASE_ADDR`.
+4. Optional repo hygiene: commit `dma-drop-test.sh` / `dma-drop-test-long.sh` under `tools/board/` so handoffs and CI can reference them.
 
 ---
 

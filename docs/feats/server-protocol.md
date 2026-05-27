@@ -1,6 +1,6 @@
 # Server Protocol
 
-This doc describes the current TCP protocol implemented by `server/` in `rp_ads1278`. It covers the capability handshake, fixed-size binary commands, fixed-size binary responses, and the current emission rules used by the MMIO-polling server.
+This doc describes the current TCP protocol implemented by `server/` in `rp_ads1278`. It covers the capability handshake, fixed-size binary commands, fixed-size binary responses, and the current emission rules used by both the MMIO-polling server and the opt-in DMA consumer.
 
 ## Goal
 
@@ -72,6 +72,7 @@ Emission rules are:
 - Send `ACK` immediately after every valid command.
 - Send `ERROR` immediately after every invalid command.
 - Send `SAMPLE` when `frame_cnt` changes.
+- In `--dma` mode, send one existing `SAMPLE` message per valid 128-byte DMA frame from a completed DDR ping-pong buffer, then ACK that buffer in MMIO.
 - `ACK` and `ERROR` carry the same snapshot fields as `SAMPLE`, so a client can always treat the message as both a response and a state update.
 
 ## Architecture
@@ -83,7 +84,7 @@ The protocol implementation is intentionally simple:
 3. `server.c` turns validated commands into MMIO writes, refreshes the latest coherent snapshot, and emits one 64-byte message per response.
 4. `memory_map.c` sign-extends channel words before they are copied into `ads1278_message`, so clients do not have to reinterpret the raw 24-bit payload.
 
-Because the current server is a latest-sample streamer, protocol messages expose current state, not a guaranteed lossless frame history.
+In legacy mode, protocol messages expose current state, not a guaranteed lossless frame history. In `--dma` mode, the same message layout is reused for completed DDR frames until a later bulk protocol is introduced.
 
 ## Known risk areas
 

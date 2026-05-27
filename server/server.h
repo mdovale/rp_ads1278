@@ -1,6 +1,7 @@
 #ifndef ADS1278_SERVER_H
 #define ADS1278_SERVER_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -15,6 +16,9 @@ typedef struct {
     uint16_t port;
     int poll_timeout_ms;
     unsigned int snapshot_retries;
+    bool dma_mode;
+    uint32_t dma_base_addr;
+    uint32_t dma_buf_size;
 } ads1278_server_options;
 
 typedef struct {
@@ -22,6 +26,9 @@ typedef struct {
     uint32_t unstable_snapshot_reads;
     uint32_t accepted_commands;
     uint32_t rejected_commands;
+    uint32_t dma_buffers_consumed;
+    uint32_t dma_frames_streamed;
+    uint32_t dma_bad_frames;
 } ads1278_server_stats;
 
 void ads1278_server_options_init(ads1278_server_options *options);

@@ -102,6 +102,7 @@ logic [AW-1:ADDR_LSB] axi_araddr;
 
 logic slv_reg_rden;
 logic slv_reg_wren;
+logic read_pending;
 
 logic AWtransfer, Wtransfer, Btransfer, ARtransfer, Rtransfer;
 assign AWtransfer = bus.AWVALID & bus.AWREADY;
@@ -189,6 +190,26 @@ logic [DW-1:0] status_reg;
 logic [DW-1:0] fifo_status_reg;
 logic [DW-1:0] fifo_drop_count_reg;
 logic [DW-1:0] fifo_capacity_reg;
+
+// Read-side snapshots for values that can change while GP0 is completing a read.
+logic [DW-1:0] read_ch_data [8];
+logic [DW-1:0] read_status_reg;
+logic [DW-1:0] read_ctrl_reg;
+logic [DW-1:0] read_extclk_div_reg;
+logic [DW-1:0] read_fifo_status_reg;
+logic [DW-1:0] read_fifo_drop_count_reg;
+logic [DW-1:0] read_fifo_capacity_reg;
+logic [DW-1:0] read_dma_ctrl_reg;
+logic [DW-1:0] read_dma_base_addr_reg;
+logic [DW-1:0] read_dma_buf_size_reg;
+logic [DW-1:0] read_dma_status_reg;
+logic [DW-1:0] read_dma_write_index_reg;
+logic [DW-1:0] read_dma_wrap_count_reg;
+logic [DW-1:0] read_dma_error_count_reg;
+logic [DW-1:0] read_dma_irq_status_reg;
+logic [DW-1:0] read_mod_div_reg;
+logic [DW-1:0] read_dma_buf_status_reg;
+logic [DW-1:0] read_dma_overwrite_count_reg;
 
 // ---- Acquisition core ----
 ads1278_acq_top u_acq (
@@ -364,57 +385,110 @@ else if (bus.BREADY & bus.BVALID)          bus.BVALID <= 1'b0;
 
 // ARREADY
 always_ff @(posedge bus.ACLK)
-if (~bus.ARESETn) bus.ARREADY <= 1'b0;
-else              bus.ARREADY <= ~bus.ARREADY & bus.ARVALID;
+if (~bus.ARESETn)      bus.ARREADY <= 1'b0;
+else if (ARtransfer)   bus.ARREADY <= 1'b0;
+else                   bus.ARREADY <= bus.ARVALID & ~bus.RVALID & ~read_pending;
 
 // Latch read address
 always_ff @(posedge bus.ACLK)
-if (~bus.ARREADY & bus.ARVALID)
+if (ARtransfer)
   axi_araddr <= bus.ARADDR[AW-1:ADDR_LSB];
 
 // Read-enable
-assign slv_reg_rden = ARtransfer & ~bus.RVALID;
+assign slv_reg_rden = ARtransfer;
 
 always_ff @(posedge bus.ACLK)
-if (slv_reg_rden)
-  bus.RRESP <= 2'b0;
+if (~bus.ARESETn) begin
+  read_pending <= 1'b0;
+end else if (slv_reg_rden) begin
+  read_pending <= 1'b1;
+end else if (read_pending & ~bus.RVALID) begin
+  read_pending <= 1'b0;
+end
 
 always_ff @(posedge bus.ACLK)
-if (~bus.ARESETn)       bus.RVALID <= 1'b0;
-else if (slv_reg_rden)  bus.RVALID <= 1'b1;
-else if (Rtransfer)     bus.RVALID <= 1'b0;
+if (~bus.ARESETn) begin
+  read_status_reg <= '0;
+  read_ctrl_reg <= '0;
+  read_extclk_div_reg <= '0;
+  read_fifo_status_reg <= '0;
+  read_fifo_drop_count_reg <= '0;
+  read_fifo_capacity_reg <= '0;
+  read_dma_ctrl_reg <= '0;
+  read_dma_base_addr_reg <= '0;
+  read_dma_buf_size_reg <= '0;
+  read_dma_status_reg <= '0;
+  read_dma_write_index_reg <= '0;
+  read_dma_wrap_count_reg <= '0;
+  read_dma_error_count_reg <= '0;
+  read_dma_irq_status_reg <= '0;
+  read_mod_div_reg <= '0;
+  read_dma_buf_status_reg <= '0;
+  read_dma_overwrite_count_reg <= '0;
+  for (int unsigned i = 0; i < 8; i++)
+    read_ch_data[i] <= '0;
+end else if (slv_reg_rden) begin
+  read_status_reg <= status_reg;
+  read_ctrl_reg <= ctrl_reg;
+  read_extclk_div_reg <= extclk_div_reg;
+  read_fifo_status_reg <= fifo_status_reg;
+  read_fifo_drop_count_reg <= fifo_drop_count_reg;
+  read_fifo_capacity_reg <= fifo_capacity_reg;
+  read_dma_ctrl_reg <= dma_ctrl_reg;
+  read_dma_base_addr_reg <= dma_base_addr_reg;
+  read_dma_buf_size_reg <= dma_buf_size_reg;
+  read_dma_status_reg <= dma_status_reg;
+  read_dma_write_index_reg <= dma_write_index_reg;
+  read_dma_wrap_count_reg <= dma_wrap_count_reg;
+  read_dma_error_count_reg <= dma_error_count_reg;
+  read_dma_irq_status_reg <= dma_irq_status_reg;
+  read_mod_div_reg <= mod_div_reg;
+  read_dma_buf_status_reg <= dma_buf_status_reg;
+  read_dma_overwrite_count_reg <= dma_overwrite_count_reg;
+  for (int unsigned i = 0; i < 8; i++)
+    read_ch_data[i] <= ch_data[i];
+end
+
+always_ff @(posedge bus.ACLK)
+if (~bus.ARESETn)                    bus.RVALID <= 1'b0;
+else if (read_pending & ~bus.RVALID) bus.RVALID <= 1'b1;
+else if (Rtransfer)                  bus.RVALID <= 1'b0;
 
 // Read data mux
 always_ff @(posedge bus.ACLK)
-if (slv_reg_rden) begin
+if (~bus.ARESETn) begin
+  bus.RRESP <= 2'b0;
+  bus.RDATA <= '0;
+end else if (read_pending & ~bus.RVALID) begin
+  bus.RRESP <= 2'b0;
   case (axi_araddr)
-    REG_CH1: bus.RDATA <= ch_data[0];
-    REG_CH2: bus.RDATA <= ch_data[1];
-    REG_CH3: bus.RDATA <= ch_data[2];
-    REG_CH4: bus.RDATA <= ch_data[3];
-    REG_CH5: bus.RDATA <= ch_data[4];
-    REG_CH6: bus.RDATA <= ch_data[5];
-    REG_CH7: bus.RDATA <= ch_data[6];
-    REG_CH8: bus.RDATA <= ch_data[7];
-    REG_STATUS: bus.RDATA <= status_reg;
-    REG_CTRL: bus.RDATA <= ctrl_reg;
-    REG_EXTCLK_DIV: bus.RDATA <= extclk_div_reg;
-    REG_FIFO_STATUS: bus.RDATA <= fifo_status_reg;
-    REG_FIFO_DROPS: bus.RDATA <= fifo_drop_count_reg;
-    REG_FIFO_CAP: bus.RDATA <= fifo_capacity_reg;
-    REG_DMA_CTRL: bus.RDATA <= dma_ctrl_reg;
-    REG_DMA_BASE: bus.RDATA <= dma_base_addr_reg;
-    REG_DMA_SIZE: bus.RDATA <= dma_buf_size_reg;
-    REG_DMA_STATUS: bus.RDATA <= dma_status_reg;
-    REG_DMA_INDEX: bus.RDATA <= dma_write_index_reg;
-    REG_DMA_WRAPS: bus.RDATA <= dma_wrap_count_reg;
-    REG_DMA_ERRORS: bus.RDATA <= dma_error_count_reg;
-    REG_DMA_IRQ_STAT: bus.RDATA <= dma_irq_status_reg;
+    REG_CH1: bus.RDATA <= read_ch_data[0];
+    REG_CH2: bus.RDATA <= read_ch_data[1];
+    REG_CH3: bus.RDATA <= read_ch_data[2];
+    REG_CH4: bus.RDATA <= read_ch_data[3];
+    REG_CH5: bus.RDATA <= read_ch_data[4];
+    REG_CH6: bus.RDATA <= read_ch_data[5];
+    REG_CH7: bus.RDATA <= read_ch_data[6];
+    REG_CH8: bus.RDATA <= read_ch_data[7];
+    REG_STATUS: bus.RDATA <= read_status_reg;
+    REG_CTRL: bus.RDATA <= read_ctrl_reg;
+    REG_EXTCLK_DIV: bus.RDATA <= read_extclk_div_reg;
+    REG_FIFO_STATUS: bus.RDATA <= read_fifo_status_reg;
+    REG_FIFO_DROPS: bus.RDATA <= read_fifo_drop_count_reg;
+    REG_FIFO_CAP: bus.RDATA <= read_fifo_capacity_reg;
+    REG_DMA_CTRL: bus.RDATA <= read_dma_ctrl_reg;
+    REG_DMA_BASE: bus.RDATA <= read_dma_base_addr_reg;
+    REG_DMA_SIZE: bus.RDATA <= read_dma_buf_size_reg;
+    REG_DMA_STATUS: bus.RDATA <= read_dma_status_reg;
+    REG_DMA_INDEX: bus.RDATA <= read_dma_write_index_reg;
+    REG_DMA_WRAPS: bus.RDATA <= read_dma_wrap_count_reg;
+    REG_DMA_ERRORS: bus.RDATA <= read_dma_error_count_reg;
+    REG_DMA_IRQ_STAT: bus.RDATA <= read_dma_irq_status_reg;
     REG_DMA_IRQ_ACK: bus.RDATA <= 32'h0000_0000;
-    REG_MOD_DIV: bus.RDATA <= mod_div_reg;
-    REG_DMA_BUF_STAT: bus.RDATA <= dma_buf_status_reg;
+    REG_MOD_DIV: bus.RDATA <= read_mod_div_reg;
+    REG_DMA_BUF_STAT: bus.RDATA <= read_dma_buf_status_reg;
     REG_DMA_BUF_ACK: bus.RDATA <= 32'h0000_0000;
-    REG_DMA_OVERWRITES: bus.RDATA <= dma_overwrite_count_reg;
+    REG_DMA_OVERWRITES: bus.RDATA <= read_dma_overwrite_count_reg;
     default: bus.RDATA <= 32'hDEAD_BEEF;
   endcase
 end

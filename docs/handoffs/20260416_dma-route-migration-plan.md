@@ -274,11 +274,13 @@ Success criteria:
 - software can detect whether any frames were dropped between capture and memory,
 - the data no longer shows the polling-driven `+2` pattern caused by the current server loop.
 
+**Status (2026-05-27):** Met on `rp-f0ef77` — `devmem dma-frames` shows `pad=ok` and `gap=1` with `FIFO_DROPS` delta 0; 300 s soak with flat `FIFO_DROPS` (rising `DMA_OVERWRITE_COUNT` without `DMA_BUF_ACK` is expected). See `docs/handoffs/20260524_dma-frame-burst-alignment.md`.
+
 Implementation note:
 
 - `DMA_CTRL` mode `1` selects capture (`ads1278_dma_fifo_axis` + acquisition FIFO pop). Mode `0` remains the synthetic pattern writer.
 - `ads1278_acq_top` exports `dma_fifo_dout` / `dma_fifo_empty` / `dma_fifo_pop` to `ads1278_dma_phase4` through `red_pitaya_top`.
-- On-target: enable acquisition (`CTRL` bit 1), set `DMA_CTRL` to `0x3` (enable + mode 1), stop DMA, then `rpdevmem dma-frames` to inspect `frame_count` gaps. Watch `FIFO_DROPS` if the FIFO outruns DDR.
+- On-target: enable acquisition (`CTRL` bit 1), set `DMA_CTRL` to `0x3` (enable + mode 1), stop DMA, then `devmem dma-frames` to inspect `frame_count` gaps. Watch `FIFO_DROPS` if the FIFO outruns DDR.
 - **DDR stride:** each logical frame is stored on a **128-byte** boundary (40-byte payload + zero padding + canary) so one record matches one HP0 burst. See `docs/feats/dma-frame-record.md` and `docs/handoffs/20260524_dma-frame-burst-alignment.md`.
 
 ### Phase 9. Update the server to consume DMA buffers
@@ -303,6 +305,8 @@ Success criteria:
 
 - one server binary can operate in either legacy MMIO mode or DMA mode,
 - software no longer depends on the poll interval to preserve every frame.
+
+**Status (2026-05-27):** Implemented in `ads1278-server --dma` for initial Phase 9 bring-up. The server opens both ping-pong DDR buffers, arms capture DMA on client connect, parses 128-byte DMA frames using the canary phase, emits one existing `SAMPLE` message per frame, and writes `DMA_BUF_ACK` after each consumed buffer. On-target validation with a client is still required before calling Phase 9 fully proven.
 
 ### Phase 10. Add a bulk transport mode
 
