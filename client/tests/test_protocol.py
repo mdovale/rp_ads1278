@@ -8,6 +8,7 @@ from ads1278_client.protocol import (
     CapabilityLineBuffer,
     MessageStreamBuffer,
     MIN_EXTCLK_DIV,
+    build_bulk_message,
     build_message,
     modulation_divider_to_frequency_hz,
     modulation_frequency_to_divider,
@@ -23,7 +24,7 @@ from ads1278_client.protocol import (
 def test_capability_buffer_accepts_split_reads() -> None:
     buffer = CapabilityLineBuffer()
     assert buffer.feed(b"RP_CAP:ads") is None
-    assert buffer.feed(b"1278_v2\n") == CAPABILITY_LINE
+    assert buffer.feed(b"1278_v3\n") == CAPABILITY_LINE
     assert buffer.take_remainder() == b""
 
 
@@ -85,6 +86,33 @@ def test_message_stream_buffer_handles_split_messages() -> None:
     assert len(messages) == 1
     assert messages[0].message_type is MessageType.ACK
     assert messages[0].opcode == CommandOpcode.SET_ENABLE
+
+
+def test_message_stream_buffer_expands_bulk_samples() -> None:
+    bulk = build_bulk_message(
+        msg_seq=100,
+        ctrl_raw=0x00000002,
+        extclk_div=125,
+        mod_div=6_250_000,
+        frames=[
+            (1, 0x00000001, [1, 2, 3, 4, 5, 6, 7, 8]),
+            (2, 0x00000003, [-1, -2, -3, -4, -5, -6, -7, -8]),
+        ],
+    )
+
+    buffer = MessageStreamBuffer()
+    assert buffer.feed(bulk[:70]) == []
+    messages = buffer.feed(bulk[70:])
+
+    assert len(messages) == 2
+    assert [message.message_type for message in messages] == [
+        MessageType.SAMPLE,
+        MessageType.SAMPLE,
+    ]
+    assert [message.msg_seq for message in messages] == [100, 101]
+    assert [message.frame_cnt for message in messages] == [1, 2]
+    assert messages[0].channels == (1, 2, 3, 4, 5, 6, 7, 8)
+    assert messages[1].channels == (-1, -2, -3, -4, -5, -6, -7, -8)
 
 
 def test_parse_message_decodes_negative_channels_and_frame_count() -> None:

@@ -17,6 +17,7 @@ class MessageType(IntEnum):
     SAMPLE = 1
     ACK = 2
     ERROR = 3
+    BULK_SAMPLES = 4
 
 
 @dataclass(frozen=True)

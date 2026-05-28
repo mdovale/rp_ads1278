@@ -335,6 +335,8 @@ Success criteria:
 - DMA capture can be consumed without redefining every UI assumption at once,
 - live plotting and full-rate recording can evolve independently.
 
+**Status (2026-05-27):** Implemented initial TCP bulk path as `ads1278-server --dma-bulk`. The server still arms the same ping-pong DMA path, but completed buffers are sent as one `BULK_SAMPLES` header followed by compact 40-byte frame records instead of one 64-byte `SAMPLE` message per frame. The Python client accepts `RP_CAP:ads1278_v3`, expands bulk batches into normal in-memory samples for plotting/CSV logging, and still accepts `ads1278_v2` for older servers. Board-local file capture and IRQ-driven DMA service remain future work.
+
 ### Phase 11. Add observability before optimization
 
 Goal:

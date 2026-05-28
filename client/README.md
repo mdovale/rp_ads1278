@@ -1,9 +1,9 @@
 # rp_ads1278 client
 
 Python desktop client for the `rp_ads1278` Red Pitaya server. It validates the
-`RP_CAP:ads1278_v2` handshake, decodes the fixed 64-byte server messages, plots
-eight live channels, sends acquisition and modulation controls, and optionally logs
-`SAMPLE` messages to CSV.
+`RP_CAP:ads1278_v3` handshake, decodes single-sample and bulk server messages,
+plots eight live channels, sends acquisition and modulation controls, and
+optionally logs expanded `SAMPLE` messages to CSV.
 
 ## Install
 
@@ -36,7 +36,9 @@ Or after installation:
 
 The GUI defaults to `127.0.0.1:5000`. Enter the Red Pitaya host, connect, and
 use the command bar to enable streaming, trigger `SYNC`, change `EXTCLK_DIV`,
-set the modulation frequency, and start or stop CSV logging.
+set the modulation frequency, and start or stop CSV logging. Set **CSV duration**
+with hours, minutes, and seconds for an automatic timed capture, or leave all
+fields at zero to log until **Stop CSV**.
 
 Enable `Plot V/s` to display each trace as volts versus relative seconds instead
 of raw ADC codes versus recent sample index. The voltage conversion uses the

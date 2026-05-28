@@ -8,14 +8,16 @@
 #endif
 
 #define ADS1278_SERVER_PORT 5000u
-#define ADS1278_CAPABILITY_LINE "RP_CAP:ads1278_v2\n"
+#define ADS1278_CAPABILITY_LINE "RP_CAP:ads1278_v3\n"
 
 enum {
     ADS1278_CHANNEL_COUNT = 8,
     ADS1278_COMMAND_WORDS = 2,
     ADS1278_COMMAND_SIZE = 8,
     ADS1278_MESSAGE_WORDS = 16,
-    ADS1278_MESSAGE_SIZE = 64
+    ADS1278_MESSAGE_SIZE = 64,
+    ADS1278_BULK_FRAME_WORDS = 10,
+    ADS1278_BULK_FRAME_SIZE = 40
 };
 
 enum {
@@ -29,7 +31,8 @@ enum {
 enum {
     ADS1278_MSG_SAMPLE = 1,
     ADS1278_MSG_ACK = 2,
-    ADS1278_MSG_ERROR = 3
+    ADS1278_MSG_ERROR = 3,
+    ADS1278_MSG_BULK_SAMPLES = 4
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -55,11 +58,20 @@ typedef struct ADS1278_PACKED {
     int32_t channels[ADS1278_CHANNEL_COUNT];
 } ads1278_message;
 
+typedef struct ADS1278_PACKED {
+    uint32_t frame_count;
+    uint32_t status_raw;
+    int32_t channels[ADS1278_CHANNEL_COUNT];
+} ads1278_bulk_frame;
+
 typedef char ads1278_command_size_must_be_8_bytes[
     (sizeof(ads1278_command) == ADS1278_COMMAND_SIZE) ? 1 : -1
 ];
-typedef char ads1278_message_size_must_be_60_bytes[
+typedef char ads1278_message_size_must_be_64_bytes[
     (sizeof(ads1278_message) == ADS1278_MESSAGE_SIZE) ? 1 : -1
+];
+typedef char ads1278_bulk_frame_size_must_be_40_bytes[
+    (sizeof(ads1278_bulk_frame) == ADS1278_BULK_FRAME_SIZE) ? 1 : -1
 ];
 
 #endif

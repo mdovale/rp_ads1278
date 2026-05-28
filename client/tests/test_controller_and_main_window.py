@@ -9,7 +9,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6 import QtWidgets
 
-from ads1278_client.controller import ClientController, ControllerSnapshot
+from ads1278_client.controller import (
+    ClientController,
+    ControllerSnapshot,
+    compose_capture_duration_seconds,
+    format_capture_duration,
+    split_capture_duration_seconds,
+)
 from ads1278_client.main_window import MainWindow
 from ads1278_client.models import Ads1278Message, CommandOpcode, MessageType
 from ads1278_client.protocol import SERVER_PORT, pack_mark_capture
@@ -72,6 +78,15 @@ def test_unit_helpers_convert_adc_codes_and_frame_counts() -> None:
     )
 
 
+def test_capture_duration_helpers_compose_split_and_format() -> None:
+    assert compose_capture_duration_seconds(0, 0, 0) is None
+    assert compose_capture_duration_seconds(1, 2, 3.5) == 3723.5
+    assert split_capture_duration_seconds(3723.5) == (1, 2, 3.5)
+    assert format_capture_duration(3723.5) == "1h 2m 3.5s"
+    assert format_capture_duration(90.0) == "1m 30s"
+    assert format_capture_duration(5.0) == "5s"
+
+
 def test_controller_clears_latest_message_on_disconnect() -> None:
     controller = ClientController()
 
@@ -113,7 +128,7 @@ def test_controller_starts_csv_only_after_capture_marker_ack(
     monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
 
     controller = ClientController()
-    controller._handle_connected("RP_CAP:ads1278_v2")
+    controller._handle_connected("RP_CAP:ads1278_v3")
 
     path = tmp_path / "capture.csv"
     controller.start_logging(path)
@@ -138,6 +153,82 @@ def test_controller_starts_csv_only_after_capture_marker_ack(
     assert len(rows) == 2
     assert rows[1][1] == "10"
     assert rows[1][2] == "3"
+
+
+def test_controller_stops_csv_after_timed_capture(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    sent_commands = []
+    timers = []
+
+    class FakeTimer:
+        def __init__(self, interval, function) -> None:
+            self.interval = interval
+            self.function = function
+            self.daemon = False
+            self.cancelled = False
+            timers.append(self)
+
+        def start(self) -> None:
+            return None
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+        def fire(self) -> None:
+            self.function()
+
+    class FakeTransportClient:
+        def __init__(self, on_message, on_connected, on_disconnected, on_error) -> None:
+            self.on_message = on_message
+            self.on_connected = on_connected
+            self.on_disconnected = on_disconnected
+            self.on_error = on_error
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def send_command(self, payload: bytes) -> None:
+            sent_commands.append(payload)
+
+        def is_connected(self) -> bool:
+            return True
+
+    monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
+    monkeypatch.setattr("ads1278_client.controller.threading.Timer", FakeTimer)
+
+    controller = ClientController()
+    controller._handle_connected("RP_CAP:ads1278_v3")
+
+    path = tmp_path / "timed.csv"
+    controller.start_logging(path, duration_s=2.5)
+    controller._handle_message(
+        _message(
+            msg_type=MessageType.ACK,
+            msg_seq=9,
+            opcode=CommandOpcode.MARK_CAPTURE,
+            value=0,
+            status_raw=0x00020001,
+        )
+    )
+    controller._handle_message(_message(msg_seq=10, status_raw=0x00030001))
+    timers[0].fire()
+    assert "timed capture" in controller.get_snapshot().status_text
+    controller._handle_message(_message(msg_seq=11, status_raw=0x00040001))
+
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+
+    assert sent_commands == [pack_mark_capture()]
+    assert timers[0].interval == 2.5
+    assert len(rows) == 2
+    assert rows[1][1] == "10"
+    assert rows[1][2] == "3"
+    assert controller.get_snapshot().logging_path == ""
 
 
 def test_controller_ignores_stale_capture_marker_ack(monkeypatch, tmp_path) -> None:
@@ -165,7 +256,7 @@ def test_controller_ignores_stale_capture_marker_ack(monkeypatch, tmp_path) -> N
     monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
 
     controller = ClientController()
-    controller._handle_connected("RP_CAP:ads1278_v2")
+    controller._handle_connected("RP_CAP:ads1278_v3")
 
     first_path = tmp_path / "first.csv"
     second_path = tmp_path / "second.csv"
@@ -213,7 +304,7 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
         connected=True,
         host="127.0.0.1",
         port=SERVER_PORT,
-        capability_line="RP_CAP:ads1278_v2",
+        capability_line="RP_CAP:ads1278_v3",
         latest_message=_message(extclk_div=625),
         status_text="Connected",
         status_level="ok",
@@ -244,7 +335,7 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
         def set_modulation_frequency(self, frequency_hz: float) -> None:
             return None
 
-        def start_logging(self, path: str) -> None:
+        def start_logging(self, path: str, duration_s: float | None = None) -> None:
             return None
 
         def stop_logging(self) -> None:

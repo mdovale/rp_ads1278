@@ -22,6 +22,38 @@ from .protocol import (
 from .transport import TransportClient
 
 
+def compose_capture_duration_seconds(
+    hours: int,
+    minutes: int,
+    seconds: float,
+) -> Optional[float]:
+    total = (max(int(hours), 0) * 3600) + (max(int(minutes), 0) * 60) + max(float(seconds), 0.0)
+    if total <= 0.0:
+        return None
+    return total
+
+
+def split_capture_duration_seconds(total_seconds: float) -> tuple[int, int, float]:
+    remaining = max(float(total_seconds), 0.0)
+    hours = int(remaining // 3600)
+    remaining -= hours * 3600
+    minutes = int(remaining // 60)
+    remaining -= minutes * 60
+    return hours, minutes, remaining
+
+
+def format_capture_duration(duration_s: float) -> str:
+    hours, minutes, seconds = split_capture_duration_seconds(duration_s)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(f"{seconds:g}s")
+    return " ".join(parts)
+
+
 @dataclass(frozen=True)
 class ControllerSnapshot:
     connected: bool
@@ -34,6 +66,12 @@ class ControllerSnapshot:
     logging_path: str
     channel_history: Sequence[np.ndarray]
     frame_history: np.ndarray
+
+
+@dataclass(frozen=True)
+class PendingLoggingRequest:
+    path: Optional[str]
+    duration_s: Optional[float]
 
 
 class ClientController:
@@ -52,8 +90,9 @@ class ClientController:
         self._status_text = "Disconnected"
         self._status_level = "info"
         self._logging_path = ""
-        self._pending_logging_paths: Deque[Optional[str]] = deque()
+        self._pending_logging_requests: Deque[PendingLoggingRequest] = deque()
         self._logger: Optional[SampleCsvLogger] = None
+        self._logging_stop_timer: Optional[threading.Timer] = None
         self._transport = TransportClient(
             on_message=self._handle_message,
             on_connected=self._handle_connected,
@@ -93,16 +132,25 @@ class ClientController:
     def set_modulation_frequency(self, frequency_hz: float) -> None:
         self._transport.send_command(pack_set_modulation_frequency(frequency_hz))
 
-    def start_logging(self, path: str | Path) -> None:
+    def start_logging(self, path: str | Path, duration_s: float | None = None) -> None:
         logging_path = str(Path(path))
+        duration = self._normalize_logging_duration(duration_s)
         with self._lock:
             if not self._connected:
                 raise RuntimeError("must be connected before starting CSV capture")
             self._cancel_pending_logging_locked()
             self._close_logger_locked()
             self._logging_path = logging_path
-            self._pending_logging_paths.append(logging_path)
-            self._status_text = f"Arming CSV capture for {self._logging_path}"
+            self._pending_logging_requests.append(
+                PendingLoggingRequest(logging_path, duration)
+            )
+            if duration is None:
+                self._status_text = f"Arming CSV capture for {self._logging_path}"
+            else:
+                self._status_text = (
+                    f"Arming {format_capture_duration(duration)} CSV capture "
+                    f"for {self._logging_path}"
+                )
             self._status_level = "info"
         try:
             self._transport.send_command(pack_mark_capture())
@@ -178,7 +226,9 @@ class ClientController:
 
             if message.message_type is MessageType.ACK:
                 if message.command_opcode is CommandOpcode.MARK_CAPTURE:
-                    self._activate_logger_locked(self._pop_pending_logging_path_locked())
+                    self._activate_logger_locked(
+                        self._pop_pending_logging_request_locked()
+                    )
                     return
                 self._status_text = (
                     f"ACK {message.opcode_label} value={message.value} seq={message.msg_seq}"
@@ -188,7 +238,8 @@ class ClientController:
 
             if message.message_type is MessageType.ERROR:
                 if message.command_opcode is CommandOpcode.MARK_CAPTURE:
-                    if self._pop_pending_logging_path_locked() is not None:
+                    pending = self._pop_pending_logging_request_locked()
+                    if pending is not None and pending.path is not None:
                         self._logging_path = ""
                     self._status_text = (
                         f"ERROR {message.opcode_label} value={message.value} seq={message.msg_seq}"
@@ -204,33 +255,82 @@ class ClientController:
             self._status_text = f"Unknown message type {message.msg_type}"
             self._status_level = "error"
 
-    def _activate_logger_locked(self, logging_path: Optional[str]) -> None:
-        if not logging_path:
+    @staticmethod
+    def _normalize_logging_duration(duration_s: float | None) -> Optional[float]:
+        if duration_s is None:
+            return None
+        duration = float(duration_s)
+        if duration <= 0.0:
+            return None
+        return duration
+
+    def _activate_logger_locked(
+        self,
+        request: Optional[PendingLoggingRequest],
+    ) -> None:
+        if request is None or not request.path:
             self._status_text = "Capture marker acknowledged"
             self._status_level = "ok"
             return
         try:
-            self._logger = SampleCsvLogger(logging_path)
+            self._logger = SampleCsvLogger(request.path)
         except Exception as exc:
             self._close_logger_locked()
             self._status_text = f"Failed to start CSV logging: {exc}"
             self._status_level = "error"
             return
-        self._logging_path = logging_path
-        self._status_text = f"Logging samples to {self._logging_path}"
+        self._logging_path = request.path
+        if request.duration_s is None:
+            self._status_text = f"Logging samples to {self._logging_path}"
+        else:
+            self._start_logging_timer_locked(request.duration_s)
+            self._status_text = (
+                f"Logging samples to {self._logging_path} for "
+                f"{format_capture_duration(request.duration_s)}"
+            )
         self._status_level = "ok"
 
+    def _start_logging_timer_locked(self, duration_s: float) -> None:
+        self._cancel_logging_timer_locked()
+        self._logging_stop_timer = threading.Timer(
+            duration_s,
+            self._handle_logging_duration_elapsed,
+        )
+        self._logging_stop_timer.daemon = True
+        self._logging_stop_timer.start()
+
+    def _handle_logging_duration_elapsed(self) -> None:
+        with self._lock:
+            if self._logger is None:
+                self._logging_stop_timer = None
+                return
+            self._cancel_pending_logging_locked()
+            self._close_logger_locked(cancel_timer=False)
+            self._logging_stop_timer = None
+            self._status_text = "CSV logging stopped after timed capture"
+            self._status_level = "info"
+
     def _cancel_pending_logging_locked(self) -> None:
-        self._pending_logging_paths = deque(
-            None for _ in self._pending_logging_paths
+        self._pending_logging_requests = deque(
+            PendingLoggingRequest(None, None)
+            for _ in self._pending_logging_requests
         )
 
-    def _pop_pending_logging_path_locked(self) -> Optional[str]:
-        if not self._pending_logging_paths:
+    def _pop_pending_logging_request_locked(
+        self,
+    ) -> Optional[PendingLoggingRequest]:
+        if not self._pending_logging_requests:
             return None
-        return self._pending_logging_paths.popleft()
+        return self._pending_logging_requests.popleft()
 
-    def _close_logger_locked(self) -> None:
+    def _cancel_logging_timer_locked(self) -> None:
+        if self._logging_stop_timer is not None:
+            self._logging_stop_timer.cancel()
+            self._logging_stop_timer = None
+
+    def _close_logger_locked(self, cancel_timer: bool = True) -> None:
+        if cancel_timer:
+            self._cancel_logging_timer_locked()
         if self._logger is not None:
             self._logger.close()
             self._logger = None

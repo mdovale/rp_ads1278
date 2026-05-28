@@ -6,8 +6,9 @@ from typing import List, Sequence
 from .models import Ads1278Message, CommandOpcode, MessageType
 
 SERVER_PORT = 5000
-CAPABILITY_LINE = "RP_CAP:ads1278_v2"
-CAPABILITY_LINE_MAX = len(CAPABILITY_LINE) + 1
+CAPABILITY_LINE = "RP_CAP:ads1278_v3"
+SUPPORTED_CAPABILITY_LINES = frozenset({CAPABILITY_LINE, "RP_CAP:ads1278_v2"})
+CAPABILITY_LINE_MAX = max(len(line) for line in SUPPORTED_CAPABILITY_LINES) + 1
 CHANNEL_COUNT = 8
 MIN_EXTCLK_DIV = 3
 MIN_MOD_DIV = 2
@@ -17,9 +18,11 @@ MIN_MODULATION_FREQUENCY_HZ = 0.1
 MAX_MODULATION_FREQUENCY_HZ = 100_000.0
 COMMAND_SIZE = 8
 MESSAGE_SIZE = 64
+BULK_FRAME_SIZE = 40
 
 COMMAND_STRUCT = struct.Struct("<II")
 MESSAGE_STRUCT = struct.Struct("<8I8i")
+BULK_FRAME_STRUCT = struct.Struct("<II8i")
 
 
 class CapabilityLineBuffer:
@@ -62,14 +65,25 @@ class MessageStreamBuffer:
         self._buffer.extend(chunk)
         messages: List[Ads1278Message] = []
         while len(self._buffer) >= MESSAGE_SIZE:
-            payload = bytes(self._buffer[:MESSAGE_SIZE])
+            header_payload = bytes(self._buffer[:MESSAGE_SIZE])
+            header = parse_message(header_payload)
+            if header.message_type is MessageType.BULK_SAMPLES:
+                payload_size = header.value * BULK_FRAME_SIZE
+                total_size = MESSAGE_SIZE + payload_size
+                if len(self._buffer) < total_size:
+                    break
+                payload = bytes(self._buffer[MESSAGE_SIZE:total_size])
+                del self._buffer[:total_size]
+                messages.extend(parse_bulk_samples(header, payload))
+                continue
+
             del self._buffer[:MESSAGE_SIZE]
-            messages.append(parse_message(payload))
+            messages.append(header)
         return messages
 
 
 def validate_capability_line(line: str) -> str:
-    if line != CAPABILITY_LINE:
+    if line not in SUPPORTED_CAPABILITY_LINES:
         raise ValueError(f"unexpected capability line: {line!r}")
     return line
 
@@ -148,6 +162,35 @@ def parse_message(payload: bytes) -> Ads1278Message:
     )
 
 
+def parse_bulk_samples(header: Ads1278Message, payload: bytes) -> List[Ads1278Message]:
+    if header.message_type is not MessageType.BULK_SAMPLES:
+        raise ValueError("bulk sample payload requires a BULK_SAMPLES header")
+    expected_size = header.value * BULK_FRAME_SIZE
+    if len(payload) != expected_size:
+        raise ValueError(f"bulk payload must be {expected_size} bytes")
+
+    messages: List[Ads1278Message] = []
+    for index in range(header.value):
+        offset = index * BULK_FRAME_SIZE
+        frame_words = BULK_FRAME_STRUCT.unpack(payload[offset : offset + BULK_FRAME_SIZE])
+        frame_count = frame_words[0]
+        status_raw = (frame_words[1] & 0x0000FFFF) | ((frame_count & 0xFFFF) << 16)
+        messages.append(
+            Ads1278Message(
+                msg_type=MessageType.SAMPLE,
+                msg_seq=(header.msg_seq + index) & 0xFFFFFFFF,
+                opcode=0,
+                value=0,
+                status_raw=status_raw,
+                ctrl_raw=header.ctrl_raw,
+                extclk_div=header.extclk_div,
+                mod_div=header.mod_div,
+                channels=tuple(frame_words[2:]),
+            )
+        )
+    return messages
+
+
 def build_message(
     msg_type: int | MessageType,
     msg_seq: int,
@@ -173,3 +216,39 @@ def build_message(
         mod_div & 0xFFFFFFFF,
         *[int(channel) for channel in channels],
     )
+
+
+def build_bulk_message(
+    msg_seq: int,
+    ctrl_raw: int,
+    extclk_div: int,
+    mod_div: int,
+    frames: Sequence[tuple[int, int, Sequence[int]]],
+) -> bytes:
+    if not frames:
+        raise ValueError("bulk message requires at least one frame")
+
+    _, last_status_raw, last_channels = frames[-1]
+    header = build_message(
+        MessageType.BULK_SAMPLES,
+        msg_seq,
+        0,
+        len(frames),
+        last_status_raw,
+        ctrl_raw,
+        extclk_div,
+        mod_div,
+        last_channels,
+    )
+    payload = bytearray()
+    for frame_count, status_raw, channels in frames:
+        if len(channels) != CHANNEL_COUNT:
+            raise ValueError(f"expected {CHANNEL_COUNT} channels")
+        payload.extend(
+            BULK_FRAME_STRUCT.pack(
+                frame_count & 0xFFFFFFFF,
+                status_raw & 0xFFFFFFFF,
+                *[int(channel) for channel in channels],
+            )
+        )
+    return header + bytes(payload)

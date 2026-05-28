@@ -1,6 +1,6 @@
 # Server Protocol
 
-This doc describes the current TCP protocol implemented by `server/` in `rp_ads1278`. It covers the capability handshake, fixed-size binary commands, fixed-size binary responses, and the current emission rules used by both the MMIO-polling server and the opt-in DMA consumer.
+This doc describes the current TCP protocol implemented by `server/` in `rp_ads1278`. It covers the capability handshake, fixed-size binary commands, 64-byte message headers, and the current emission rules used by both the MMIO-polling server and the opt-in DMA consumers.
 
 ## Goal
 
@@ -9,21 +9,21 @@ Define the current network contract clearly enough that the implemented Python c
 ## Scope
 
 - In scope: the capability line, default TCP port, binary command encoding, binary message encoding, little-endian assumptions, and current emission rules.
-- Out of scope: the FPGA register map itself, GUI behavior, Linux service setup, and any future protocol revision beyond `ads1278_v2`.
+- Out of scope: the FPGA register map itself, GUI behavior, Linux service setup, and board-local high-rate capture files.
 
 ## User-facing behavior
 
 Current transport assumptions are:
 
 - TCP listener port: `5000`
-- Capability line: ASCII, newline-terminated
+- Capability line: ASCII, newline-terminated (`RP_CAP:ads1278_v3`)
 - All binary traffic after the capability line: little-endian
 - Channel samples on the wire: signed 32-bit integers produced by server-side sign extension of the FPGA's zero-extended 24-bit channel words
 
 Connection startup is:
 
 1. Client connects to the TCP port.
-2. Server sends `RP_CAP:ads1278_v2\n`.
+2. Server sends `RP_CAP:ads1278_v3\n`.
 3. Server sends one binary `SAMPLE` message immediately, even if acquisition is currently disabled.
 
 Client-to-server commands are fixed 8-byte messages:
@@ -45,14 +45,14 @@ Current opcodes are:
 
 Unknown opcodes are rejected.
 
-Server-to-client binary messages are fixed 64-byte payloads:
+Server-to-client legacy/control messages use a fixed 64-byte header:
 
 | Word | Field | Meaning |
 |------|------|------|
-| `0` | `msg_type` | `1 = SAMPLE`, `2 = ACK`, `3 = ERROR` |
+| `0` | `msg_type` | `1 = SAMPLE`, `2 = ACK`, `3 = ERROR`, `4 = BULK_SAMPLES` |
 | `1` | `msg_seq` | Monotonic server-side message counter |
 | `2` | `opcode` | `0` for `SAMPLE`; echoed command opcode for `ACK`/`ERROR` |
-| `3` | `value` | `0` for `SAMPLE`; echoed command value for `ACK`/`ERROR` |
+| `3` | `value` | `0` for `SAMPLE`; echoed command value for `ACK`/`ERROR`; frame count for `BULK_SAMPLES` |
 | `4` | `status_raw` | Raw FPGA `STATUS` word from the latest coherent snapshot |
 | `5` | `ctrl_raw` | Raw FPGA `CTRL` word from the latest coherent snapshot |
 | `6` | `extclk_div` | Raw FPGA divider word from the latest coherent snapshot |
@@ -66,6 +66,23 @@ Server-to-client binary messages are fixed 64-byte payloads:
 | `14` | `ch7` | Signed 32-bit channel sample |
 | `15` | `ch8` | Signed 32-bit channel sample |
 
+For `BULK_SAMPLES`, the 64-byte header is immediately followed by `value` compact frame records. Each compact record is 40 bytes:
+
+| Word | Field | Meaning |
+|------|------|------|
+| `0` | `frame_count` | Raw 32-bit frame counter stored in DDR |
+| `1` | `status_raw` | Raw frame status word stored in DDR |
+| `2` | `ch1` | Signed 32-bit channel sample |
+| `3` | `ch2` | Signed 32-bit channel sample |
+| `4` | `ch3` | Signed 32-bit channel sample |
+| `5` | `ch4` | Signed 32-bit channel sample |
+| `6` | `ch5` | Signed 32-bit channel sample |
+| `7` | `ch6` | Signed 32-bit channel sample |
+| `8` | `ch7` | Signed 32-bit channel sample |
+| `9` | `ch8` | Signed 32-bit channel sample |
+
+The bulk header's `msg_seq` is the first logical sample sequence number in the batch. The updated Python client expands a bulk wire message into normal in-memory `SAMPLE` messages with sequence numbers `msg_seq + frame_index`, so plotting and CSV logging can keep using the existing sample path.
+
 Emission rules are:
 
 - Send one initial `SAMPLE` immediately after the capability line.
@@ -73,6 +90,7 @@ Emission rules are:
 - Send `ERROR` immediately after every invalid command.
 - Send `SAMPLE` when `frame_cnt` changes.
 - In `--dma` mode, send one existing `SAMPLE` message per valid 128-byte DMA frame from a completed DDR ping-pong buffer, then ACK that buffer in MMIO.
+- In `--dma-bulk` mode, send one `BULK_SAMPLES` header plus compact records for valid frames in the completed DDR ping-pong buffer, then ACK that buffer in MMIO.
 - `ACK` and `ERROR` carry the same snapshot fields as `SAMPLE`, so a client can always treat the message as both a response and a state update.
 
 ## Architecture
@@ -82,21 +100,24 @@ The protocol implementation is intentionally simple:
 1. `protocol.h` defines the packed `ads1278_command` and `ads1278_message` structs and compile-time size guards.
 2. `cmd_parse.c` buffers short `recv()` chunks until a full 8-byte command is available, then validates opcode/value rules.
 3. `server.c` turns validated commands into MMIO writes, refreshes the latest coherent snapshot, and emits one 64-byte message per response.
-4. `memory_map.c` sign-extends channel words before they are copied into `ads1278_message`, so clients do not have to reinterpret the raw 24-bit payload.
+4. `memory_map.c` sign-extends MMIO channel words before they are copied into `ads1278_message`, so clients do not have to reinterpret the raw 24-bit payload.
+5. `server.c` copies DMA frame payloads into compact bulk records when `--dma-bulk` is enabled.
 
-In legacy mode, protocol messages expose current state, not a guaranteed lossless frame history. In `--dma` mode, the same message layout is reused for completed DDR frames until a later bulk protocol is introduced.
+In legacy mode, protocol messages expose current state, not a guaranteed lossless frame history. In `--dma` mode, the same message layout is reused for completed DDR frames. In `--dma-bulk` mode, completed DDR frames are grouped so the server does not send one TCP message per sample.
 
 ## Known risk areas
 
 - `msg_seq` is monotonic only for the current server process lifetime.
 - `frame_cnt` is only 16 bits inside `status_raw`, so clients must tolerate wraparound.
+- Bulk records carry a 32-bit `frame_count`, but the current UI model still exposes the lower 16 bits through `frame_cnt` for consistency with `status_raw`.
 - `ACK` for `TRIGGER_SYNC` confirms that software wrote the command, not that a downstream analog effect has been verified.
 - The protocol is little-endian by design; a big-endian port would need explicit byte swapping.
 
 ## Manual QA
 
 - Connect with `nc` or a small Python client and confirm the ASCII capability line arrives first.
-- Confirm the next binary payload is exactly 64 bytes.
+- Confirm the next binary payload is exactly 64 bytes for the initial `SAMPLE`.
+- With `ads1278-server --dma-bulk`, confirm later `BULK_SAMPLES` headers are followed by `value * 40` payload bytes and the updated client expands them into normal samples.
 - Send `SET_ENABLE 1` and confirm the next response is `ACK` with echoed opcode/value.
 - Send `SET_EXTCLK_DIV 2` and confirm the next response is `ERROR`.
 - Send `SET_MOD_DIV 6250000` and confirm the next response is `ACK` with `mod_div = 6250000`.

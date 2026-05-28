@@ -17,6 +17,7 @@ typedef struct {
     int poll_timeout_ms;
     unsigned int snapshot_retries;
     bool dma_mode;
+    bool dma_bulk_mode;
     uint32_t dma_base_addr;
     uint32_t dma_buf_size;
 } ads1278_server_options;
@@ -28,6 +29,7 @@ typedef struct {
     uint32_t rejected_commands;
     uint32_t dma_buffers_consumed;
     uint32_t dma_frames_streamed;
+    uint32_t dma_bulk_messages_streamed;
     uint32_t dma_bad_frames;
 } ads1278_server_stats;
 

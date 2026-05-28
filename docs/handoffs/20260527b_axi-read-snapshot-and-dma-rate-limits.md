@@ -200,9 +200,11 @@ devmem read 0x60    # toggles; clears after ACK
 - [ ] `DMA_OVERWRITE_COUNT` **flat** while connected
 - [ ] Client sequential frames (no systematic gaps)
 
-### Phase 10 (out of scope until GP0 + Phase 9 pass)
+### Phase 10 (initial TCP bulk path implemented)
 
-- Bulk TCP / board-side logging for high-rate capture without per-frame `SAMPLE`.
+- `ads1278-server --dma-bulk` sends completed DMA buffers as one `BULK_SAMPLES` header plus compact 40-byte frame records, avoiding one TCP message per sample.
+- The Python client accepts `RP_CAP:ads1278_v3` and expands bulk batches back into normal sample objects for plotting/CSV logging.
+- Board-side logging and IRQ-driven service are still future work; GP0 stability and SPI `overflow` limits are still separate from the TCP bulk path.
 
 ---
 

@@ -1,15 +1,15 @@
 # Client
 
-This doc covers the current `client/` layer in `rp_ads1278`: a Python desktop GUI that connects to the Red Pitaya server, consumes the fixed `ads1278_v2` TCP protocol, plots eight live channels, exposes acquisition and modulation controls, and optionally logs streamed samples to CSV.
+This doc covers the current `client/` layer in `rp_ads1278`: a Python desktop GUI that connects to the Red Pitaya server, consumes the `ads1278_v3` TCP protocol, plots eight live channels, exposes acquisition and modulation controls, and optionally logs streamed samples to CSV.
 
 ## Goal
 
-Provide a small host-side bring-up client that makes the current server stream observable and controllable without changing the wire protocol or implying lossless capture semantics that the server does not provide.
+Provide a small host-side bring-up client that makes the current server stream observable and controllable while accepting both legacy single-sample messages and DMA bulk batches.
 
 ## Scope
 
-- In scope: local desktop execution, one TCP connection to one server, capability-line validation, fixed-size binary message parsing, live plotting, enable/disable, `SYNC`, divider, modulation frequency controls, and CSV logging for `SAMPLE` messages.
-- Out of scope: protocol negotiation beyond the fixed capability check, multi-device control, offline import, derived DSP views, timing-accurate recording, and guaranteed gap-free history capture.
+- In scope: local desktop execution, one TCP connection to one server, capability-line validation, binary message parsing, bulk sample expansion, live plotting, enable/disable, `SYNC`, divider, modulation frequency controls, and manual or timed CSV logging for `SAMPLE` messages.
+- Out of scope: multi-device control, offline import, derived DSP views, timing-accurate recording, and guaranteed gap-free history capture.
 
 ## User-facing behavior
 
@@ -27,14 +27,15 @@ Current run and test entry points are:
 Current runtime behavior is:
 
 - The GUI defaults to `127.0.0.1:5000` and lets the user change host and port before connecting.
-- The client requires the exact capability line `RP_CAP:ads1278_v2` before it accepts binary traffic.
-- After the handshake, the client decodes the fixed 64-byte little-endian server messages defined in [Server Protocol](server-protocol.md).
+- The client accepts `RP_CAP:ads1278_v3` and still accepts `RP_CAP:ads1278_v2` for older servers before it accepts binary traffic.
+- After the handshake, the client decodes the little-endian server messages defined in [Server Protocol](server-protocol.md), including `BULK_SAMPLES` batches.
 - The top bar shows connection state, `frame_cnt`, `msg_seq`, enable state, overflow state, the currently reported EXTCLK divider, and modulation frequency.
 - The main view plots `CH1` through `CH8` as eight live traces.
 - `Enable`, `Disable`, `SYNC`, `Set divider`, and `Set MOD` send the documented binary commands to the server.
 - `ACK` and `ERROR` update the displayed state immediately and also surface a visible status line that includes the echoed opcode and value.
-- CSV logging writes rows only for `SAMPLE` messages and includes host timestamp plus server metadata and all eight channels.
-- Logging stops cleanly on manual stop or disconnect.
+- CSV logging writes rows only for in-memory `SAMPLE` messages and includes host timestamp plus server metadata and all eight channels. Bulk batches are expanded to `SAMPLE` objects before logging.
+- CSV logging can run manually until `Stop CSV` or for a positive duration entered as hours, minutes, and seconds. Timed capture starts its countdown after the `MARK_CAPTURE` ACK opens the CSV logger.
+- Logging stops cleanly on manual stop, timed capture expiry, or disconnect.
 
 ## Architecture
 
@@ -52,16 +53,16 @@ The connection lifecycle is:
 
 1. The user clicks `Connect`.
 2. The controller starts a background transport worker.
-3. The worker connects to the configured host and port, reads until newline, validates `RP_CAP:ads1278_v2`, and forwards any binary remainder into the message parser.
-4. The worker parses fixed 64-byte messages and pushes `Ads1278Message` objects back to the controller.
-5. The controller updates the latest snapshot for all message types, appends plot data only for `SAMPLE`, and logs only `SAMPLE` rows when CSV logging is active.
+3. The worker connects to the configured host and port, reads until newline, validates the capability line, and forwards any binary remainder into the message parser.
+4. The worker parses 64-byte single-message headers, waits for any `BULK_SAMPLES` payload bytes, and pushes expanded `Ads1278Message` objects back to the controller.
+5. The controller updates the latest snapshot for all message types, appends plot data only for `SAMPLE`, and logs only `SAMPLE` rows when CSV logging is active. If a CSV duration was requested, the controller starts the stop timer only after the capture marker is acknowledged.
 6. The Qt GUI polls a thread-safe controller snapshot on a timer and updates labels and plots on the main thread.
 7. On disconnect or transport failure, the worker stops, the controller closes any active CSV logger, and the GUI returns to the disconnected state.
 
 ## Known risk areas
 
 - The current server is a latest-sample streamer, so the client must not be interpreted as a lossless recorder.
-- At higher acquisition rates the plotted and logged stream can skip intermediate frames even on a healthy network because the server only emits the latest coherent snapshot.
+- At higher acquisition rates the plotted stream can still be decimated by the GUI history length and render cadence. Bulk mode improves transport efficiency but does not fix FPGA `overflow`, GP0 hangs, or any explicit DMA overwrite/drop counters.
 - `frame_cnt` is only 16 bits inside `status_raw`, so wraparound is normal.
 - `overflow` is a sticky FPGA overlap indicator, not a TCP packet-loss count.
 - `ACK` for `TRIGGER_SYNC` confirms the command write path, not a verified analog-world effect.
@@ -79,7 +80,8 @@ The connection lifecycle is:
 - Set divider `625` and confirm the displayed divider updates.
 - Set divider `2` and confirm an `ERROR` is shown.
 - Set MOD frequency `10 Hz` and confirm the displayed modulation frequency updates to `10.000 Hz`.
-- Start CSV logging, re-enable streaming, and confirm the file contains only `SAMPLE` rows with negative values preserved.
+- Start manual CSV logging, re-enable streaming, and confirm the file contains only `SAMPLE` rows with negative values preserved.
+- Set a positive CSV duration, start logging, and confirm logging stops automatically after the requested capture window.
 
 ## Key files
 

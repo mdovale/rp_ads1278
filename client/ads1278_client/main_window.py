@@ -8,7 +8,11 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .controller import ClientController
+from .controller import (
+    ClientController,
+    compose_capture_duration_seconds,
+    split_capture_duration_seconds,
+)
 from .protocol import (
     DEFAULT_MODULATION_FREQUENCY_HZ,
     MIN_EXTCLK_DIV,
@@ -170,6 +174,35 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.set_modulation_button)
 
         layout.addSpacing(16)
+        layout.addWidget(QtWidgets.QLabel("CSV duration"))
+        self.csv_duration_hours_input = QtWidgets.QSpinBox()
+        self.csv_duration_hours_input.setRange(0, 99)
+        self.csv_duration_hours_input.setSuffix(" h")
+        self.csv_duration_hours_input.setToolTip(
+            "Timed capture length. Leave all fields at 0 for manual logging."
+        )
+        layout.addWidget(self.csv_duration_hours_input)
+
+        self.csv_duration_minutes_input = QtWidgets.QSpinBox()
+        self.csv_duration_minutes_input.setRange(0, 59)
+        self.csv_duration_minutes_input.setSuffix(" m")
+        layout.addWidget(self.csv_duration_minutes_input)
+
+        self.csv_duration_seconds_input = QtWidgets.QDoubleSpinBox()
+        self.csv_duration_seconds_input.setRange(0.0, 59.999)
+        self.csv_duration_seconds_input.setDecimals(3)
+        self.csv_duration_seconds_input.setSingleStep(1.0)
+        self.csv_duration_seconds_input.setSuffix(" s")
+        layout.addWidget(self.csv_duration_seconds_input)
+
+        hours, minutes, seconds = self._load_csv_duration_parts()
+        self.csv_duration_hours_input.setValue(hours)
+        self.csv_duration_minutes_input.setValue(minutes)
+        self.csv_duration_seconds_input.setValue(seconds)
+        self.csv_duration_hours_input.valueChanged.connect(self._save_csv_duration_parts)
+        self.csv_duration_minutes_input.valueChanged.connect(self._save_csv_duration_parts)
+        self.csv_duration_seconds_input.valueChanged.connect(self._save_csv_duration_parts)
+
         self.start_logging_button = QtWidgets.QPushButton("Start CSV")
         self.start_logging_button.clicked.connect(self._start_logging)
         layout.addWidget(self.start_logging_button)
@@ -290,9 +323,37 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path:
             return
         try:
-            self._controller.start_logging(path)
+            duration_s = self._selected_csv_duration_seconds()
+            self._controller.start_logging(path, duration_s=duration_s)
         except Exception as exc:
             self._show_status(str(exc), "error")
+
+    def _load_csv_duration_parts(self) -> tuple[int, int, float]:
+        if (
+            self._settings.contains("csv_duration_h")
+            or self._settings.contains("csv_duration_m")
+            or self._settings.contains("csv_duration_sec")
+        ):
+            return (
+                self._settings.value("csv_duration_h", 0, type=int),
+                self._settings.value("csv_duration_m", 0, type=int),
+                self._settings.value("csv_duration_sec", 0.0, type=float),
+            )
+
+        legacy_total = self._settings.value("csv_duration_s", 0.0, type=float)
+        return split_capture_duration_seconds(legacy_total)
+
+    def _save_csv_duration_parts(self) -> None:
+        self._settings.setValue("csv_duration_h", self.csv_duration_hours_input.value())
+        self._settings.setValue("csv_duration_m", self.csv_duration_minutes_input.value())
+        self._settings.setValue("csv_duration_sec", self.csv_duration_seconds_input.value())
+
+    def _selected_csv_duration_seconds(self) -> float | None:
+        return compose_capture_duration_seconds(
+            self.csv_duration_hours_input.value(),
+            self.csv_duration_minutes_input.value(),
+            self.csv_duration_seconds_input.value(),
+        )
 
     def _refresh(self) -> None:
         snapshot = self._controller.get_snapshot()
@@ -340,6 +401,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.set_modulation_button,
             self.start_logging_button,
             self.stop_logging_button,
+            self.csv_duration_hours_input,
+            self.csv_duration_minutes_input,
+            self.csv_duration_seconds_input,
         ):
             widget.setEnabled(buttons_enabled)
 

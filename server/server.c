@@ -85,6 +85,7 @@ void ads1278_server_options_init(ads1278_server_options *options)
     options->poll_timeout_ms = ADS1278_SERVER_POLL_TIMEOUT_MS;
     options->snapshot_retries = ADS1278_SNAPSHOT_RETRY_LIMIT;
     options->dma_mode = false;
+    options->dma_bulk_mode = false;
     options->dma_base_addr = ADS1278_DMA_PHASE4_DDR_BASE;
     options->dma_buf_size = ADS1278_DMA_PHASE4_DDR_SIZE;
 }
@@ -93,7 +94,7 @@ void ads1278_server_print_usage(FILE *stream, const char *argv0)
 {
     fprintf(
         stream,
-        "Usage: %s [--port N] [--mem-path PATH] [--poll-ms N] [--snapshot-retries N] [--dma] [--dma-base ADDR] [--dma-size BYTES]\n",
+        "Usage: %s [--port N] [--mem-path PATH] [--poll-ms N] [--snapshot-retries N] [--dma] [--dma-bulk] [--dma-base ADDR] [--dma-size BYTES]\n",
         argv0
     );
 }
@@ -458,6 +459,11 @@ int ads1278_server_parse_args(int argc, char **argv, ads1278_server_options *opt
         }
         if (strcmp(argv[index], "--dma") == 0) {
             options->dma_mode = true;
+            continue;
+        }
+        if (strcmp(argv[index], "--dma-bulk") == 0) {
+            options->dma_mode = true;
+            options->dma_bulk_mode = true;
             continue;
         }
         if (strcmp(argv[index], "--dma-base") == 0) {
@@ -976,33 +982,113 @@ static void ads1278_snapshot_from_dma_words(
     state->have_snapshot = true;
 }
 
-static int ads1278_send_dma_buffer(
-    int client_fd,
-    ads1278_server_state *state,
-    unsigned int buffer_index
+static void ads1278_bulk_frame_from_dma_words(
+    ads1278_bulk_frame *frame,
+    const volatile uint32_t *words
 )
 {
-    ads1278_ddr_map *ddr;
-    size_t frame_start_word;
-    size_t word_count;
-    size_t frame_count;
+    unsigned int channel;
+
+    frame->frame_count = words[0];
+    frame->status_raw = words[1];
+    for (channel = 0u; channel < ADS1278_CHANNEL_COUNT; ++channel) {
+        frame->channels[channel] = (int32_t)words[2u + channel];
+    }
+}
+
+static void ads1278_snapshot_from_bulk_frame(
+    ads1278_server_state *state,
+    const ads1278_bulk_frame *frame
+)
+{
+    unsigned int channel;
+
+    state->snapshot.status_raw = frame->status_raw;
+    state->snapshot.frame_cnt = (uint16_t)frame->frame_count;
+    for (channel = 0u; channel < ADS1278_CHANNEL_COUNT; ++channel) {
+        state->snapshot.channels[channel] = frame->channels[channel];
+    }
+    state->have_snapshot = true;
+}
+
+static int ads1278_send_dma_buffer_bulk(
+    int client_fd,
+    ads1278_server_state *state,
+    ads1278_ddr_map *ddr,
+    size_t frame_start_word,
+    size_t frame_count
+)
+{
+    ads1278_bulk_frame *frames;
+    ads1278_message header;
     size_t frame_index;
-    uint32_t ack_mask;
+    size_t valid_count;
+    uint32_t base_msg_seq;
 
-    if (state == NULL || buffer_index > 1u || !state->dma.maps_open) {
-        errno = EINVAL;
+    if (frame_count > UINT32_MAX) {
+        errno = EOVERFLOW;
         return -1;
     }
 
-    ddr = &state->dma.buffers[buffer_index];
-    ads1278_ddr_sync_for_cpu((void *)ddr->words, ddr->map_size);
-    if (ads1278_dma_find_frame_start_word(ddr, &frame_start_word) != 0) {
+    frames = calloc(frame_count, sizeof(*frames));
+    if (frames == NULL) {
         return -1;
     }
 
-    word_count = ddr->map_size / sizeof(uint32_t);
-    frame_count = (word_count - frame_start_word) / ADS1278_DMA_FRAME_WORDS;
-    ads1278_refresh_control_fields(state);
+    valid_count = 0u;
+    for (frame_index = 0u; frame_index < frame_count; ++frame_index) {
+        size_t word_index;
+        const volatile uint32_t *words;
+
+        word_index = frame_start_word + (frame_index * ADS1278_DMA_FRAME_WORDS);
+        words = &ddr->words[word_index];
+        if (!ads1278_dma_frame_words_valid(words)) {
+            state->stats.dma_bad_frames += 1u;
+            continue;
+        }
+
+        ads1278_bulk_frame_from_dma_words(&frames[valid_count], words);
+        ads1278_snapshot_from_bulk_frame(state, &frames[valid_count]);
+        valid_count += 1u;
+    }
+
+    if (valid_count == 0u) {
+        free(frames);
+        return 0;
+    }
+
+    base_msg_seq = state->stats.next_msg_seq;
+    ads1278_fill_message(
+        state,
+        &header,
+        ADS1278_MSG_BULK_SAMPLES,
+        0u,
+        (uint32_t)valid_count
+    );
+    header.msg_seq = base_msg_seq;
+    state->stats.next_msg_seq = base_msg_seq + (uint32_t)valid_count;
+    if (ads1278_send_all(client_fd, &header, sizeof(header)) != 0
+        || ads1278_send_all(client_fd, frames, valid_count * sizeof(*frames)) != 0) {
+        free(frames);
+        return -1;
+    }
+
+    state->last_streamed_frame_cnt = state->snapshot.frame_cnt;
+    state->stats.dma_frames_streamed += (uint32_t)valid_count;
+    state->stats.dma_bulk_messages_streamed += 1u;
+    free(frames);
+    return 0;
+}
+
+static int ads1278_send_dma_buffer_samples(
+    int client_fd,
+    ads1278_server_state *state,
+    ads1278_ddr_map *ddr,
+    size_t frame_start_word,
+    size_t frame_count
+)
+{
+    size_t frame_index;
 
     for (frame_index = 0u; frame_index < frame_count; ++frame_index) {
         size_t word_index;
@@ -1023,24 +1109,69 @@ static int ads1278_send_dma_buffer(
         state->stats.dma_frames_streamed += 1u;
     }
 
+    return 0;
+}
+
+static int ads1278_send_dma_buffer(
+    int client_fd,
+    ads1278_server_state *state,
+    unsigned int buffer_index,
+    bool bulk_mode
+)
+{
+    ads1278_ddr_map *ddr;
+    size_t frame_start_word;
+    size_t word_count;
+    size_t frame_count;
+    uint32_t ack_mask;
+
+    if (state == NULL || buffer_index > 1u || !state->dma.maps_open) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ddr = &state->dma.buffers[buffer_index];
+    ads1278_ddr_sync_for_cpu((void *)ddr->words, ddr->map_size);
+    if (ads1278_dma_find_frame_start_word(ddr, &frame_start_word) != 0) {
+        return -1;
+    }
+
+    word_count = ddr->map_size / sizeof(uint32_t);
+    frame_count = (word_count - frame_start_word) / ADS1278_DMA_FRAME_WORDS;
+    ads1278_refresh_control_fields(state);
+
+    if (bulk_mode) {
+        if (ads1278_send_dma_buffer_bulk(client_fd, state, ddr, frame_start_word, frame_count) != 0) {
+            return -1;
+        }
+    } else {
+        if (ads1278_send_dma_buffer_samples(client_fd, state, ddr, frame_start_word, frame_count) != 0) {
+            return -1;
+        }
+    }
+
     ack_mask = (buffer_index == 0u) ? ADS1278_DMA_BUF_ACK_BUF0 : ADS1278_DMA_BUF_ACK_BUF1;
     ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_BUF_ACK, ack_mask);
     state->stats.dma_buffers_consumed += 1u;
     return 0;
 }
 
-static int ads1278_service_dma_buffers(int client_fd, ads1278_server_state *state)
+static int ads1278_service_dma_buffers(
+    int client_fd,
+    ads1278_server_state *state,
+    bool bulk_mode
+)
 {
     uint32_t buf_status;
 
     buf_status = ads1278_mmio_read32(&state->mmio, ADS1278_REG_DMA_BUF_STATUS);
     if ((buf_status & ADS1278_DMA_BUF_STATUS_BUF0_FULL) != 0u) {
-        if (ads1278_send_dma_buffer(client_fd, state, 0u) != 0) {
+        if (ads1278_send_dma_buffer(client_fd, state, 0u, bulk_mode) != 0) {
             return -1;
         }
     }
     if ((buf_status & ADS1278_DMA_BUF_STATUS_BUF1_FULL) != 0u) {
-        if (ads1278_send_dma_buffer(client_fd, state, 1u) != 0) {
+        if (ads1278_send_dma_buffer(client_fd, state, 1u, bulk_mode) != 0) {
             return -1;
         }
     }
@@ -1108,10 +1239,11 @@ int ads1278_server_run(const ads1278_server_options *options)
 
     fprintf(
         stderr,
-        "Listening on port %u using %s%s\n",
+        "Listening on port %u using %s%s%s\n",
         (unsigned int)options->port,
         options->mem_path,
-        options->dma_mode ? " (DMA mode)" : ""
+        options->dma_mode ? " (DMA mode" : "",
+        options->dma_mode ? (options->dma_bulk_mode ? ", bulk)" : ")") : ""
     );
 
     while (g_stop_requested == 0) {
@@ -1209,7 +1341,7 @@ int ads1278_server_run(const ads1278_server_options *options)
         }
 
         if (options->dma_mode) {
-            if (ads1278_service_dma_buffers(client_fd, &state) != 0) {
+            if (ads1278_service_dma_buffers(client_fd, &state, options->dma_bulk_mode) != 0) {
                 ads1278_close_client(&client_fd, &state, options->dma_mode);
                 next_sample_deadline_valid = false;
                 continue;
