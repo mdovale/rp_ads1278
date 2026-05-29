@@ -72,6 +72,7 @@ class ControllerSnapshot:
 class PendingLoggingRequest:
     path: Optional[str]
     duration_s: Optional[float]
+    channel_indices: tuple[int, ...]
 
 
 class ClientController:
@@ -132,9 +133,15 @@ class ClientController:
     def set_modulation_frequency(self, frequency_hz: float) -> None:
         self._transport.send_command(pack_set_modulation_frequency(frequency_hz))
 
-    def start_logging(self, path: str | Path, duration_s: float | None = None) -> None:
+    def start_logging(
+        self,
+        path: str | Path,
+        duration_s: float | None = None,
+        channel_indices: Sequence[int] | None = None,
+    ) -> None:
         logging_path = str(Path(path))
         duration = self._normalize_logging_duration(duration_s)
+        indices = self._normalize_channel_indices(channel_indices)
         with self._lock:
             if not self._connected:
                 raise RuntimeError("must be connected before starting CSV capture")
@@ -142,7 +149,7 @@ class ClientController:
             self._close_logger_locked()
             self._logging_path = logging_path
             self._pending_logging_requests.append(
-                PendingLoggingRequest(logging_path, duration)
+                PendingLoggingRequest(logging_path, duration, indices)
             )
             if duration is None:
                 self._status_text = f"Arming CSV capture for {self._logging_path}"
@@ -273,7 +280,10 @@ class ClientController:
             self._status_level = "ok"
             return
         try:
-            self._logger = SampleCsvLogger(request.path)
+            self._logger = SampleCsvLogger(
+                request.path,
+                channel_indices=request.channel_indices,
+            )
         except Exception as exc:
             self._close_logger_locked()
             self._status_text = f"Failed to start CSV logging: {exc}"
@@ -310,9 +320,23 @@ class ClientController:
             self._status_text = "CSV logging stopped after timed capture"
             self._status_level = "info"
 
+    @staticmethod
+    def _normalize_channel_indices(
+        channel_indices: Sequence[int] | None,
+    ) -> tuple[int, ...]:
+        if channel_indices is None:
+            return tuple(range(CHANNEL_COUNT))
+        indices = tuple(int(idx) for idx in channel_indices)
+        if not indices:
+            raise ValueError("at least one channel is required")
+        for idx in indices:
+            if idx < 0 or idx >= CHANNEL_COUNT:
+                raise ValueError(f"channel index out of range: {idx}")
+        return indices
+
     def _cancel_pending_logging_locked(self) -> None:
         self._pending_logging_requests = deque(
-            PendingLoggingRequest(None, None)
+            PendingLoggingRequest(None, None, ())
             for _ in self._pending_logging_requests
         )
 

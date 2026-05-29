@@ -8,12 +8,20 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .channel_math import (
+    MathTrace,
+    compute_trace,
+    load_math_traces_from_settings,
+    math_traces_to_json,
+)
 from .controller import (
     ClientController,
     compose_capture_duration_seconds,
     split_capture_duration_seconds,
 )
+from .math_trace_dialog import MathTraceDialog
 from .protocol import (
+    CHANNEL_COUNT,
     DEFAULT_MODULATION_FREQUENCY_HZ,
     MIN_EXTCLK_DIV,
     MAX_MODULATION_FREQUENCY_HZ,
@@ -33,6 +41,8 @@ Y_UNIT_CODES = "Codes"
 Y_UNIT_VOLTS = "Volts"
 X_UNIT_SAMPLES = "Samples"
 X_UNIT_TIME = "Time (s)"
+PLOT_LAYOUT_SEPARATE = "Separate"
+PLOT_LAYOUT_OVERLAY = "Combined"
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -42,6 +52,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings = QtCore.QSettings("rp_ads1278", "client")
         self._curves: list[pg.PlotDataItem] = []
         self._plots: list[pg.PlotItem] = []
+        self._math_curves: list[pg.PlotDataItem] = []
+        self._math_plots: list[pg.PlotItem] = []
+        self._math_curve_traces: list[MathTrace] = []
+        self._math_traces: list[MathTrace] = self._load_math_traces()
+        self._channel_checkboxes: list[QtWidgets.QCheckBox] = []
+        self._plot_graphics: pg.GraphicsLayoutWidget | None = None
+        self._plot_host = QtWidgets.QWidget()
+        self._plot_host_layout = QtWidgets.QVBoxLayout(self._plot_host)
+        self._plot_host_layout.setContentsMargins(0, 0, 0, 0)
 
         self.setWindowTitle("rp_ads1278 Client")
         self.resize(1400, 900)
@@ -62,9 +81,10 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._build_connection_bar())
         layout.addWidget(self._build_command_bar())
         layout.addWidget(self._build_display_bar())
+        layout.addWidget(self._build_math_bar())
         layout.addWidget(self._build_status_bar())
-        layout.addWidget(self._build_plot_widget(), 1)
-        self._apply_axis_labels()
+        layout.addWidget(self._plot_host, 1)
+        self._rebuild_plot_widget()
 
         self.setCentralWidget(central)
 
@@ -252,11 +272,67 @@ class MainWindow(QtWidgets.QMainWindow):
         self.x_unit_combo.currentTextChanged.connect(self._on_x_unit_changed)
         layout.addWidget(self.x_unit_combo)
 
+        layout.addSpacing(16)
+        layout.addWidget(QtWidgets.QLabel("Channels"))
+        for idx in range(CHANNEL_COUNT):
+            checkbox = QtWidgets.QCheckBox(f"CH{idx + 1}")
+            checkbox.setChecked(self._load_channel_selected(idx))
+            checkbox.toggled.connect(
+                lambda checked, channel_idx=idx: self._on_channel_toggled(
+                    channel_idx, checked
+                )
+            )
+            layout.addWidget(checkbox)
+            self._channel_checkboxes.append(checkbox)
+
+        layout.addSpacing(16)
+        layout.addWidget(QtWidgets.QLabel("Plot layout"))
+        self.plot_layout_combo = QtWidgets.QComboBox()
+        self.plot_layout_combo.addItems([PLOT_LAYOUT_SEPARATE, PLOT_LAYOUT_OVERLAY])
+        self.plot_layout_combo.blockSignals(True)
+        self.plot_layout_combo.setCurrentText(self._load_plot_layout())
+        self.plot_layout_combo.blockSignals(False)
+        self.plot_layout_combo.currentTextChanged.connect(self._on_plot_layout_changed)
+        layout.addWidget(self.plot_layout_combo)
+
         self.sample_rate_label = QtWidgets.QLabel("fs: -")
         layout.addSpacing(8)
         layout.addWidget(self.sample_rate_label)
 
         layout.addStretch(1)
+        return widget
+
+    def _build_math_bar(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        controls = QtWidgets.QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.addWidget(QtWidgets.QLabel("Math traces"))
+        add_button = QtWidgets.QPushButton("Add")
+        add_button.clicked.connect(self._add_math_trace)
+        controls.addWidget(add_button)
+
+        edit_button = QtWidgets.QPushButton("Edit")
+        edit_button.clicked.connect(self._edit_selected_math_trace)
+        controls.addWidget(edit_button)
+
+        remove_button = QtWidgets.QPushButton("Remove")
+        remove_button.clicked.connect(self._remove_selected_math_trace)
+        controls.addWidget(remove_button)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self.math_traces_list = QtWidgets.QListWidget()
+        self.math_traces_list.setMaximumHeight(72)
+        self.math_traces_list.itemChanged.connect(self._on_math_trace_item_changed)
+        self.math_traces_list.itemDoubleClicked.connect(
+            lambda _item: self._edit_selected_math_trace()
+        )
+        layout.addWidget(self.math_traces_list)
+        self._refresh_math_traces_list()
         return widget
 
     def _build_status_bar(self) -> QtWidgets.QWidget:
@@ -274,19 +350,65 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.status_label, 4)
         return widget
 
-    def _build_plot_widget(self) -> QtWidgets.QWidget:
+    def _rebuild_plot_widget(self) -> None:
+        if self._plot_graphics is not None:
+            self._plot_host_layout.removeWidget(self._plot_graphics)
+            self._plot_graphics.deleteLater()
+            self._plot_graphics = None
+
+        self._plots.clear()
+        self._curves.clear()
+        self._math_plots.clear()
+        self._math_curves.clear()
+        self._math_curve_traces.clear()
+
         pg.setConfigOptions(antialias=False)
         graphics = pg.GraphicsLayoutWidget()
-        for idx in range(8):
-            row = idx // 2
-            col = idx % 2
-            plot = graphics.addPlot(row=row, col=col, title=f"CH{idx + 1}")
+        enabled_math_traces = self._enabled_math_traces()
+        if self._is_overlay_plot_mode():
+            plot = graphics.addPlot(row=0, col=0, title="Selected channels")
             plot.showGrid(x=True, y=True, alpha=0.25)
-            curve = plot.plot(pen=pg.intColor(idx, hues=8))
+            plot.addLegend(offset=(10, 10))
             self._plots.append(plot)
-            self._curves.append(curve)
+            for idx in range(CHANNEL_COUNT):
+                curve = plot.plot(
+                    pen=pg.mkPen(pg.intColor(idx, hues=8), width=2),
+                    name=f"CH{idx + 1}",
+                )
+                self._curves.append(curve)
+            for math_idx, trace in enumerate(enabled_math_traces):
+                curve = plot.plot(
+                    pen=pg.mkPen(pg.intColor(math_idx + CHANNEL_COUNT, hues=12), width=2),
+                    name=trace.label(),
+                )
+                self._math_curve_traces.append(trace)
+                self._math_curves.append(curve)
+        else:
+            for idx in range(CHANNEL_COUNT):
+                row = idx // 2
+                col = idx % 2
+                plot = graphics.addPlot(row=row, col=col, title=f"CH{idx + 1}")
+                plot.showGrid(x=True, y=True, alpha=0.25)
+                curve = plot.plot(pen=pg.intColor(idx, hues=8))
+                self._plots.append(plot)
+                self._curves.append(curve)
+            row_offset = (CHANNEL_COUNT + 1) // 2
+            for math_idx, trace in enumerate(enabled_math_traces):
+                row = row_offset + math_idx // 2
+                col = math_idx % 2
+                plot = graphics.addPlot(row=row, col=col, title=trace.label())
+                plot.showGrid(x=True, y=True, alpha=0.25)
+                curve = plot.plot(
+                    pen=pg.mkPen(pg.intColor(math_idx + CHANNEL_COUNT, hues=12), width=2)
+                )
+                self._math_plots.append(plot)
+                self._math_curve_traces.append(trace)
+                self._math_curves.append(curve)
+
+        self._plot_graphics = graphics
+        self._plot_host_layout.addWidget(self._plot_graphics)
+        self._apply_plot_visibility()
         self._apply_axis_labels()
-        return graphics
 
     def _toggle_connection(self) -> None:
         snapshot = self._controller.get_snapshot()
@@ -324,7 +446,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             duration_s = self._selected_csv_duration_seconds()
-            self._controller.start_logging(path, duration_s=duration_s)
+            self._controller.start_logging(
+                path,
+                duration_s=duration_s,
+                channel_indices=self._selected_channel_indices(),
+            )
         except Exception as exc:
             self._show_status(str(exc), "error")
 
@@ -416,17 +542,230 @@ class MainWindow(QtWidgets.QMainWindow):
         vref = self.vref_input.value()
         y_scale = vref / ADS1278_FULL_SCALE_CODE if y_unit == Y_UNIT_VOLTS else None
 
-        for curve, history in zip(self._curves, snapshot.channel_history):
-            if history.size == 0:
-                curve.setData([], [])
+        if self._is_overlay_plot_mode():
+            for idx, curve in enumerate(self._curves):
+                if not self._is_channel_selected(idx):
+                    curve.setVisible(False)
+                    continue
+
+                curve.setVisible(True)
+                self._update_curve_data(
+                    curve,
+                    snapshot.channel_history[idx],
+                    x_unit=x_unit,
+                    dt=dt,
+                    y_scale=y_scale,
+                )
+            for trace, curve in zip(self._math_curve_traces, self._math_curves):
+                curve.setVisible(True)
+                history = compute_trace(trace, snapshot.channel_history)
+                self._update_curve_data(
+                    curve,
+                    history,
+                    x_unit=x_unit,
+                    dt=dt,
+                    y_scale=y_scale,
+                    is_math=True,
+                )
+            return
+
+        for idx, (plot, curve) in enumerate(zip(self._plots, self._curves)):
+            visible = self._is_channel_selected(idx)
+            plot.setVisible(visible)
+            if not visible:
                 continue
 
-            y = history.astype(np.float64) * y_scale if y_scale is not None else history
-            if x_unit == X_UNIT_TIME and dt is not None:
-                x = np.arange(history.size, dtype=np.float64) * dt
-                curve.setData(x, y)
-            else:
-                curve.setData(y)
+            self._update_curve_data(
+                curve,
+                snapshot.channel_history[idx],
+                x_unit=x_unit,
+                dt=dt,
+                y_scale=y_scale,
+            )
+
+        for plot, trace, curve in zip(
+            self._math_plots,
+            self._math_curve_traces,
+            self._math_curves,
+        ):
+            plot.setVisible(True)
+            history = compute_trace(trace, snapshot.channel_history)
+            self._update_curve_data(
+                curve,
+                history,
+                x_unit=x_unit,
+                dt=dt,
+                y_scale=y_scale,
+                is_math=True,
+            )
+
+    @staticmethod
+    def _update_curve_data(
+        curve: pg.PlotDataItem,
+        history: np.ndarray,
+        *,
+        x_unit: str,
+        dt: float | None,
+        y_scale: float | None,
+        is_math: bool = False,
+    ) -> None:
+        if history.size == 0:
+            curve.setData([], [])
+            return
+
+        if is_math or y_scale is not None:
+            y = history.astype(np.float64)
+            if y_scale is not None:
+                y = y * y_scale
+        else:
+            y = history
+
+        if x_unit == X_UNIT_TIME and dt is not None:
+            x = np.arange(history.size, dtype=np.float64) * dt
+            curve.setData(x, y)
+        else:
+            curve.setData(y)
+
+    def _load_math_traces(self) -> list[MathTrace]:
+        return load_math_traces_from_settings(
+            self._settings.value("math_traces", "", type=str)
+        )
+
+    def _save_math_traces(self) -> None:
+        self._settings.setValue("math_traces", math_traces_to_json(self._math_traces))
+
+    def _enabled_math_traces(self) -> list[MathTrace]:
+        return [trace for trace in self._math_traces if trace.enabled]
+
+    def _refresh_math_traces_list(self) -> None:
+        if not hasattr(self, "math_traces_list"):
+            return
+        self.math_traces_list.blockSignals(True)
+        self.math_traces_list.clear()
+        for idx, trace in enumerate(self._math_traces):
+            item = QtWidgets.QListWidgetItem(trace.label())
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setCheckState(
+                QtCore.Qt.Checked if trace.enabled else QtCore.Qt.Unchecked
+            )
+            item.setData(QtCore.Qt.UserRole, idx)
+            self.math_traces_list.addItem(item)
+        self.math_traces_list.blockSignals(False)
+
+    def _add_math_trace(self) -> None:
+        dialog = MathTraceDialog(self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        self._math_traces.append(dialog.build_trace(enabled=True))
+        self._save_math_traces()
+        self._refresh_math_traces_list()
+        self._rebuild_plot_widget()
+
+    def _edit_selected_math_trace(self) -> None:
+        item = self.math_traces_list.currentItem()
+        if item is None:
+            return
+        trace_idx = int(item.data(QtCore.Qt.UserRole))
+        dialog = MathTraceDialog(self, trace=self._math_traces[trace_idx])
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        enabled = self._math_traces[trace_idx].enabled
+        self._math_traces[trace_idx] = dialog.build_trace(enabled=enabled)
+        self._save_math_traces()
+        self._refresh_math_traces_list()
+        self._rebuild_plot_widget()
+
+    def _remove_selected_math_trace(self) -> None:
+        row = self.math_traces_list.currentRow()
+        if row < 0:
+            return
+        del self._math_traces[row]
+        self._save_math_traces()
+        self._refresh_math_traces_list()
+        self._rebuild_plot_widget()
+
+    def _on_math_trace_item_changed(self, item: QtWidgets.QListWidgetItem) -> None:
+        if item is None:
+            return
+        trace_idx = item.data(QtCore.Qt.UserRole)
+        if trace_idx is None:
+            return
+        enabled = item.checkState() == QtCore.Qt.Checked
+        trace = self._math_traces[int(trace_idx)]
+        if trace.enabled == enabled:
+            return
+        self._math_traces[int(trace_idx)] = MathTrace(
+            enabled=enabled,
+            terms=trace.terms,
+        )
+        self._save_math_traces()
+        self._rebuild_plot_widget()
+
+    def _load_channel_selected(self, idx: int) -> bool:
+        default = [True] * CHANNEL_COUNT
+        stored = self._settings.value("visible_channels", default, type=list)
+        if not isinstance(stored, list) or len(stored) != CHANNEL_COUNT:
+            return True
+        return bool(stored[idx])
+
+    def _save_channel_selection(self) -> None:
+        self._settings.setValue(
+            "visible_channels",
+            [checkbox.isChecked() for checkbox in self._channel_checkboxes],
+        )
+
+    def _is_channel_selected(self, idx: int) -> bool:
+        if idx < 0 or idx >= len(self._channel_checkboxes):
+            return True
+        return self._channel_checkboxes[idx].isChecked()
+
+    def _selected_channel_indices(self) -> tuple[int, ...]:
+        indices = tuple(
+            idx
+            for idx, checkbox in enumerate(self._channel_checkboxes)
+            if checkbox.isChecked()
+        )
+        if indices:
+            return indices
+        return (0,)
+
+    def _on_channel_toggled(self, idx: int, checked: bool) -> None:
+        if not checked and sum(checkbox.isChecked() for checkbox in self._channel_checkboxes) == 0:
+            checkbox = self._channel_checkboxes[idx]
+            checkbox.blockSignals(True)
+            checkbox.setChecked(True)
+            checkbox.blockSignals(False)
+            self._apply_plot_visibility()
+            return
+        self._save_channel_selection()
+        self._apply_plot_visibility()
+
+    def _load_plot_layout(self) -> str:
+        layout = self._settings.value("plot_layout", PLOT_LAYOUT_SEPARATE, type=str)
+        if layout in (PLOT_LAYOUT_SEPARATE, PLOT_LAYOUT_OVERLAY):
+            return layout
+        return PLOT_LAYOUT_SEPARATE
+
+    def _is_overlay_plot_mode(self) -> bool:
+        if hasattr(self, "plot_layout_combo"):
+            return self.plot_layout_combo.currentText() == PLOT_LAYOUT_OVERLAY
+        return self._load_plot_layout() == PLOT_LAYOUT_OVERLAY
+
+    def _on_plot_layout_changed(self, value: str) -> None:
+        self._settings.setValue("plot_layout", value)
+        self._rebuild_plot_widget()
+
+    def _apply_plot_visibility(self) -> None:
+        if not self._plots:
+            return
+        if self._is_overlay_plot_mode():
+            self._plots[0].setVisible(True)
+            for idx, curve in enumerate(self._curves):
+                curve.setVisible(self._is_channel_selected(idx))
+            return
+
+        for idx, plot in enumerate(self._plots):
+            plot.setVisible(self._is_channel_selected(idx))
 
     def _on_y_unit_changed(self, value: str) -> None:
         self._settings.setValue("y_unit", value)
@@ -440,13 +779,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.setValue("vref_volts", value)
 
     def _apply_axis_labels(self) -> None:
-        if not self._plots:
+        if not self._plots and not self._math_plots:
             return
         y_unit = self.y_unit_combo.currentText()
         x_unit = self.x_unit_combo.currentText()
         y_label = "Voltage (V)" if y_unit == Y_UNIT_VOLTS else "ADC code"
         x_label = "Time (s)" if x_unit == X_UNIT_TIME else "Recent samples"
-        for plot in self._plots:
+        for plot in (*self._plots, *self._math_plots):
             plot.setLabel("left", y_label)
             plot.setLabel("bottom", x_label)
 
