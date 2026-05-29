@@ -493,7 +493,8 @@ end else if (read_pending & ~bus.RVALID) begin
   endcase
 end
 
-// IRQ on new data ready, optionally ORed with DMA sticky status.
-assign irq = status_reg[0] | (dma_irq_enable & dma_irq_pending);
+// PS IRQ only for sticky DMA events (wrap / error / overwrite), not every SPI frame.
+// status_reg[0] remains on STATUS and LED; do not drive irq.
+assign irq = dma_irq_enable & dma_irq_pending;
 
 endmodule: ads1278_axi_slave
