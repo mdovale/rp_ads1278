@@ -23,6 +23,10 @@ def sample_period_seconds(extclk_div: int) -> float:
     return ADS1278_CLOCKS_PER_SAMPLE / extclk_hz
 
 
+def sample_rate_hz(extclk_div: int) -> float:
+    return 1.0 / sample_period_seconds(extclk_div)
+
+
 def frame_counts_to_relative_seconds(
     frame_counts: np.ndarray,
     extclk_div: int,

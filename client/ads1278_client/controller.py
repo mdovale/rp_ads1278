@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,7 +65,9 @@ class ControllerSnapshot:
     status_text: str
     status_level: str
     logging_path: str
+    logging_remaining_s: Optional[float]
     channel_history: Sequence[np.ndarray]
+    asd_channel_history: Sequence[np.ndarray]
     frame_history: np.ndarray
 
 
@@ -76,11 +79,15 @@ class PendingLoggingRequest:
 
 
 class ClientController:
-    def __init__(self, history_length: int = 600) -> None:
+    def __init__(self, history_length: int = 600, asd_history_length: int = 131_072) -> None:
         self._lock = threading.Lock()
         self._history_length = history_length
+        self._asd_history_length = asd_history_length
         self._channel_history: List[Deque[int]] = [
             deque(maxlen=history_length) for _ in range(CHANNEL_COUNT)
+        ]
+        self._asd_channel_history: List[Deque[int]] = [
+            deque(maxlen=asd_history_length) for _ in range(CHANNEL_COUNT)
         ]
         self._frame_history: Deque[int] = deque(maxlen=history_length)
         self._connected = False
@@ -91,6 +98,7 @@ class ClientController:
         self._status_text = "Disconnected"
         self._status_level = "info"
         self._logging_path = ""
+        self._logging_deadline_monotonic: Optional[float] = None
         self._pending_logging_requests: Deque[PendingLoggingRequest] = deque()
         self._logger: Optional[SampleCsvLogger] = None
         self._logging_stop_timer: Optional[threading.Timer] = None
@@ -148,6 +156,7 @@ class ClientController:
             self._cancel_pending_logging_locked()
             self._close_logger_locked()
             self._logging_path = logging_path
+            self._set_logging_deadline_locked(duration)
             self._pending_logging_requests.append(
                 PendingLoggingRequest(logging_path, duration, indices)
             )
@@ -180,6 +189,10 @@ class ClientController:
                 np.asarray(list(channel), dtype=np.int32)
                 for channel in self._channel_history
             ]
+            asd_history = [
+                np.asarray(list(channel), dtype=np.int32)
+                for channel in self._asd_channel_history
+            ]
             frame_history = np.asarray(list(self._frame_history), dtype=np.int32)
             return ControllerSnapshot(
                 connected=self._connected,
@@ -190,7 +203,9 @@ class ClientController:
                 status_text=self._status_text,
                 status_level=self._status_level,
                 logging_path=self._logging_path,
+                logging_remaining_s=self._logging_remaining_seconds_unlocked(),
                 channel_history=history,
+                asd_channel_history=asd_history,
                 frame_history=frame_history,
             )
 
@@ -206,6 +221,7 @@ class ClientController:
             self._connected = False
             self._capability_line = ""
             self._latest_message = None
+            self._clear_asd_history_locked()
             self._cancel_pending_logging_locked()
             self._close_logger_locked()
             self._status_text = f"Disconnected: {reason}"
@@ -223,6 +239,7 @@ class ClientController:
                 self._frame_history.append(message.frame_cnt)
                 for idx, channel in enumerate(message.channels):
                     self._channel_history[idx].append(channel)
+                    self._asd_channel_history[idx].append(channel)
                 if self._logger is not None:
                     self._logger.write_sample(message)
                 self._status_text = (
@@ -248,6 +265,7 @@ class ClientController:
                     pending = self._pop_pending_logging_request_locked()
                     if pending is not None and pending.path is not None:
                         self._logging_path = ""
+                        self._clear_logging_deadline_locked()
                     self._status_text = (
                         f"ERROR {message.opcode_label} value={message.value} seq={message.msg_seq}"
                     )
@@ -293,17 +311,38 @@ class ClientController:
         if request.duration_s is None:
             self._status_text = f"Logging samples to {self._logging_path}"
         else:
-            self._start_logging_timer_locked(request.duration_s)
-            self._status_text = (
-                f"Logging samples to {self._logging_path} for "
-                f"{format_capture_duration(request.duration_s)}"
-            )
+            self._start_logging_timer_locked()
+            remaining_s = self._logging_remaining_seconds_unlocked()
+            if remaining_s is not None:
+                self._status_text = (
+                    f"Logging samples to {self._logging_path} "
+                    f"({format_capture_duration(remaining_s)} remaining)"
+                )
+            else:
+                self._status_text = f"Logging samples to {self._logging_path}"
         self._status_level = "ok"
 
-    def _start_logging_timer_locked(self, duration_s: float) -> None:
+    def _logging_remaining_seconds_unlocked(self) -> Optional[float]:
+        if self._logging_deadline_monotonic is None:
+            return None
+        return max(0.0, self._logging_deadline_monotonic - time.monotonic())
+
+    def _set_logging_deadline_locked(self, duration_s: Optional[float]) -> None:
+        if duration_s is None:
+            self._logging_deadline_monotonic = None
+        else:
+            self._logging_deadline_monotonic = time.monotonic() + duration_s
+
+    def _clear_logging_deadline_locked(self) -> None:
+        self._logging_deadline_monotonic = None
+
+    def _start_logging_timer_locked(self) -> None:
         self._cancel_logging_timer_locked()
+        remaining_s = self._logging_remaining_seconds_unlocked()
+        if remaining_s is None:
+            return
         self._logging_stop_timer = threading.Timer(
-            duration_s,
+            remaining_s,
             self._handle_logging_duration_elapsed,
         )
         self._logging_stop_timer.daemon = True
@@ -340,6 +379,10 @@ class ClientController:
             for _ in self._pending_logging_requests
         )
 
+    def _clear_asd_history_locked(self) -> None:
+        for channel in self._asd_channel_history:
+            channel.clear()
+
     def _pop_pending_logging_request_locked(
         self,
     ) -> Optional[PendingLoggingRequest]:
@@ -359,3 +402,4 @@ class ClientController:
             self._logger.close()
             self._logger = None
         self._logging_path = ""
+        self._clear_logging_deadline_locked()

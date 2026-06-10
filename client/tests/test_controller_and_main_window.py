@@ -4,6 +4,7 @@ import csv
 import os
 
 import numpy as np
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -20,6 +21,7 @@ from ads1278_client.main_window import (
     MainWindow,
     PLOT_LAYOUT_OVERLAY,
     PLOT_LAYOUT_SEPARATE,
+    VIEW_MODE_ASD,
 )
 from ads1278_client.models import Ads1278Message, CommandOpcode, MessageType
 from ads1278_client.protocol import CHANNEL_COUNT, SERVER_PORT, pack_mark_capture
@@ -28,6 +30,7 @@ from ads1278_client.units import (
     raw_codes_to_volts,
     sample_indices_to_relative_seconds,
     sample_period_seconds,
+    sample_rate_hz,
 )
 
 
@@ -63,12 +66,17 @@ def _empty_frame_history() -> np.ndarray:
     return np.asarray([], dtype=np.int32)
 
 
+def _empty_asd_history() -> list[np.ndarray]:
+    return [np.asarray([], dtype=np.int32) for _ in range(8)]
+
+
 def test_unit_helpers_convert_adc_codes_and_frame_counts() -> None:
     samples = np.asarray([-(1 << 23), 0, 1 << 22], dtype=np.int32)
     volts = raw_codes_to_volts(samples, reference_volts=2.5)
 
     assert np.allclose(volts, [-2.5, 0.0, 1.25])
     assert np.isclose(sample_period_seconds(625), 0.00512)
+    assert np.isclose(sample_rate_hz(625), 195.3125)
     assert np.allclose(
         frame_counts_to_relative_seconds(
             np.asarray([65534, 65535, 0], dtype=np.int32),
@@ -91,6 +99,40 @@ def test_capture_duration_helpers_compose_split_and_format() -> None:
     assert format_capture_duration(5.0) == "5s"
 
 
+def test_controller_reports_csv_countdown_when_timed_capture_starts(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class FakeTransportClient:
+        def __init__(self, on_message, on_connected, on_disconnected, on_error) -> None:
+            return None
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def send_command(self, payload: bytes) -> None:
+            return None
+
+        def is_connected(self) -> bool:
+            return True
+
+    monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
+
+    controller = ClientController()
+    controller._handle_connected("RP_CAP:ads1278_v3")
+
+    path = tmp_path / "countdown.csv"
+    controller.start_logging(path, duration_s=90.0)
+    snapshot = controller.get_snapshot()
+
+    assert snapshot.logging_path == str(path)
+    assert snapshot.logging_remaining_s is not None
+    assert 89.0 <= snapshot.logging_remaining_s <= 90.0
+
+
 def test_controller_clears_latest_message_on_disconnect() -> None:
     controller = ClientController()
 
@@ -102,6 +144,21 @@ def test_controller_clears_latest_message_on_disconnect() -> None:
     snapshot = controller.get_snapshot()
     assert snapshot.connected is False
     assert snapshot.latest_message is None
+
+
+def test_controller_keeps_longer_asd_history_and_clears_on_disconnect() -> None:
+    controller = ClientController(history_length=2, asd_history_length=4)
+
+    for msg_seq in range(6):
+        controller._handle_message(_message(msg_seq=msg_seq))
+
+    snapshot = controller.get_snapshot()
+    assert snapshot.channel_history[0].tolist() == [1, 1]
+    assert snapshot.asd_channel_history[0].tolist() == [1, 1, 1, 1]
+
+    controller._handle_disconnected("disconnected")
+
+    assert controller.get_snapshot().asd_channel_history[0].size == 0
 
 
 def test_controller_starts_csv_only_after_capture_marker_ack(
@@ -228,7 +285,7 @@ def test_controller_stops_csv_after_timed_capture(
         rows = list(csv.reader(handle))
 
     assert sent_commands == [pack_mark_capture()]
-    assert timers[0].interval == 2.5
+    assert timers[0].interval == pytest.approx(2.5, abs=0.05)
     assert len(rows) == 2
     assert rows[1][1] == "10"
     assert rows[1][2] == "3"
@@ -372,7 +429,9 @@ def test_main_window_requires_at_least_one_selected_channel(monkeypatch) -> None
         status_text="Disconnected",
         status_level="info",
         logging_path="",
+        logging_remaining_s=None,
         channel_history=_empty_history(),
+        asd_channel_history=_empty_asd_history(),
         frame_history=_empty_frame_history(),
     )
 
@@ -417,6 +476,8 @@ def test_main_window_requires_at_least_one_selected_channel(monkeypatch) -> None
     window = MainWindow()
     try:
         window.plot_layout_combo.setCurrentText(PLOT_LAYOUT_SEPARATE)
+        for checkbox in window._channel_checkboxes:
+            checkbox.setChecked(True)
         for idx in range(1, CHANNEL_COUNT):
             window._channel_checkboxes[idx].setChecked(False)
             window._on_channel_toggled(idx, False)
@@ -444,7 +505,9 @@ def test_main_window_overlay_plot_mode_uses_single_plot(monkeypatch) -> None:
         status_text="Disconnected",
         status_level="info",
         logging_path="",
+        logging_remaining_s=None,
         channel_history=_empty_history(),
+        asd_channel_history=_empty_asd_history(),
         frame_history=_empty_frame_history(),
     )
 
@@ -499,6 +562,77 @@ def test_main_window_overlay_plot_mode_uses_single_plot(monkeypatch) -> None:
         app.processEvents()
 
 
+def test_main_window_asd_view_uses_spectrum_axis_labels(monkeypatch) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    snapshot = ControllerSnapshot(
+        connected=False,
+        host="127.0.0.1",
+        port=SERVER_PORT,
+        capability_line="",
+        latest_message=None,
+        status_text="Disconnected",
+        status_level="info",
+        logging_path="",
+        logging_remaining_s=None,
+        channel_history=_empty_history(),
+        asd_channel_history=_empty_asd_history(),
+        frame_history=_empty_frame_history(),
+    )
+
+    class FakeController:
+        def get_snapshot(self) -> ControllerSnapshot:
+            return snapshot
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def set_enabled(self, enabled: bool) -> None:
+            return None
+
+        def trigger_sync(self) -> None:
+            return None
+
+        def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
+            return None
+
+        def start_logging(
+            self,
+            path: str,
+            duration_s: float | None = None,
+            channel_indices=None,
+        ) -> None:
+            return None
+
+        def stop_logging(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
+
+    window = MainWindow()
+    try:
+        window.plot_layout_combo.setCurrentText(PLOT_LAYOUT_SEPARATE)
+        window.view_mode_combo.setCurrentText(VIEW_MODE_ASD)
+
+        assert len(window._plots) == CHANNEL_COUNT
+        assert window._plots[0].getAxis("bottom").labelText == "Frequency (Hz)"
+        assert window._plots[0].getAxis("left").labelText == "ASD (V/sqrt(Hz))"
+        assert window.y_unit_combo.currentText() == "Volts"
+        assert window.y_unit_combo.isEnabled() is False
+        assert window.x_unit_combo.isEnabled() is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     snapshot = ControllerSnapshot(
@@ -510,7 +644,9 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
         status_text="Connected",
         status_level="ok",
         logging_path="",
+        logging_remaining_s=None,
         channel_history=_empty_history(),
+        asd_channel_history=_empty_asd_history(),
         frame_history=_empty_frame_history(),
     )
 

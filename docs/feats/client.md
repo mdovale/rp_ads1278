@@ -8,8 +8,8 @@ Provide a small host-side bring-up client that makes the current server stream o
 
 ## Scope
 
-- In scope: local desktop execution, one TCP connection to one server, capability-line validation, binary message parsing, bulk sample expansion, live plotting, enable/disable, `SYNC`, divider, modulation frequency controls, and manual or timed CSV logging for `SAMPLE` messages.
-- Out of scope: multi-device control, offline import, derived DSP views, timing-accurate recording, and guaranteed gap-free history capture.
+- In scope: local desktop execution, one TCP connection to one server, capability-line validation, binary message parsing, bulk sample expansion, live plotting, optional live ASD plotting, enable/disable, `SYNC`, divider, modulation frequency controls, and manual or timed CSV logging for `SAMPLE` messages.
+- Out of scope: multi-device control, offline import, derived DSP views beyond ASD, timing-accurate recording, and guaranteed gap-free history capture.
 
 ## User-facing behavior
 
@@ -31,6 +31,10 @@ Current runtime behavior is:
 - After the handshake, the client decodes the little-endian server messages defined in [Server Protocol](server-protocol.md), including `BULK_SAMPLES` batches.
 - The top bar shows connection state, `frame_cnt`, `msg_seq`, enable state, overflow state, the currently reported EXTCLK divider, and modulation frequency.
 - The main view plots `CH1` through `CH8` as eight live traces.
+- The **View** selector switches between time-domain plotting and an optional
+  SpecKit-backed ASD view. ASD plots `V/sqrt(Hz)` versus Hz from a longer client
+  history buffer and recomputes in a background worker so the GUI remains
+  responsive.
 - `Enable`, `Disable`, `SYNC`, `Set divider`, and `Set MOD` send the documented binary commands to the server.
 - `ACK` and `ERROR` update the displayed state immediately and also surface a visible status line that includes the echoed opcode and value.
 - CSV logging writes rows only for in-memory `SAMPLE` messages and includes host timestamp plus server metadata and all eight channels. Bulk batches are expanded to `SAMPLE` objects before logging.
@@ -43,7 +47,7 @@ The current client intentionally mirrors the same small-file structure used in t
 
 1. `client/main.py` is the source entry point and launches the Qt application.
 2. `ads1278_client/main_window.py` owns the PySide6 window, connection and command widgets, logging actions, and eight `pyqtgraph` plots.
-3. `ads1278_client/controller.py` owns the latest displayed state, channel history buffers, command dispatch, and logger lifecycle.
+3. `ads1278_client/controller.py` owns the latest displayed state, channel history buffers, ASD history buffers, command dispatch, and logger lifecycle.
 4. `ads1278_client/transport.py` owns the background socket thread, capability-line read, fixed-size message framing, and serialized command writes.
 5. `ads1278_client/protocol.py` owns the exact command/message structs, incremental handshake parsing, and binary decoding helpers.
 6. `ads1278_client/csv_logger.py` owns CSV file creation, header writing, row writing, flushes, and close behavior.
@@ -55,7 +59,7 @@ The connection lifecycle is:
 2. The controller starts a background transport worker.
 3. The worker connects to the configured host and port, reads until newline, validates the capability line, and forwards any binary remainder into the message parser.
 4. The worker parses 64-byte single-message headers, waits for any `BULK_SAMPLES` payload bytes, and pushes expanded `Ads1278Message` objects back to the controller.
-5. The controller updates the latest snapshot for all message types, appends plot data only for `SAMPLE`, and logs only `SAMPLE` rows when CSV logging is active. If a CSV duration was requested, the controller starts the stop timer only after the capture marker is acknowledged.
+5. The controller updates the latest snapshot for all message types, appends time-plot and ASD history data only for `SAMPLE`, and logs only `SAMPLE` rows when CSV logging is active. If a CSV duration was requested, the controller starts the stop timer only after the capture marker is acknowledged.
 6. The Qt GUI polls a thread-safe controller snapshot on a timer and updates labels and plots on the main thread.
 7. On disconnect or transport failure, the worker stops, the controller closes any active CSV logger, and the GUI returns to the disconnected state.
 
@@ -67,6 +71,9 @@ The connection lifecycle is:
 - `overflow` is a sticky FPGA overlap indicator, not a TCP packet-loss count.
 - `ACK` for `TRIGGER_SYNC` confirms the command write path, not a verified analog-world effect.
 - Divider changes affect the FPGA timing path globally because that is the current hardware contract.
+- The live ASD view is computed from the client-side stream buffer. It is useful
+  for quick noise inspection, but it is not a substitute for logged, offline
+  analysis when gap-free records or very low-frequency confidence are required.
 
 ## Manual QA
 

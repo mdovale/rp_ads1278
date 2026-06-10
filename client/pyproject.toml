@@ -18,6 +18,14 @@ dependencies = [
 dev = [
     "pytest",
 ]
+spectrum = [
+    "control",
+    "matplotlib",
+    "numba",
+    "pandas",
+    "scipy",
+    "tqdm",
+]
 
 [project.scripts]
 ads1278-client = "ads1278_client.main_window:main"

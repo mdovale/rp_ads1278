@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import sys
+import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +11,12 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .asd_worker import (
+    AsdComputation,
+    AsdTraceRequest,
+    AsdTraceResult,
+    compute_asd_traces,
+)
 from .channel_math import (
     MathTrace,
     compute_trace,
@@ -17,6 +26,7 @@ from .channel_math import (
 from .controller import (
     ClientController,
     compose_capture_duration_seconds,
+    format_capture_duration,
     split_capture_duration_seconds,
 )
 from .math_trace_dialog import MathTraceDialog
@@ -29,6 +39,7 @@ from .protocol import (
     SERVER_PORT,
     modulation_divider_to_frequency_hz,
 )
+from .units import sample_rate_hz
 
 # ADS1278 high-resolution mode: data rate = EXTCLK / 512.
 # EXTCLK from FPGA divider: EXTCLK = SYS_CLK / (2 * div_val).
@@ -43,6 +54,9 @@ X_UNIT_SAMPLES = "Samples"
 X_UNIT_TIME = "Time (s)"
 PLOT_LAYOUT_SEPARATE = "Separate"
 PLOT_LAYOUT_OVERLAY = "Combined"
+VIEW_MODE_TIME = "Time"
+VIEW_MODE_ASD = "ASD"
+ASD_MIN_SAMPLE_COUNT = 256
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -61,6 +75,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._plot_host = QtWidgets.QWidget()
         self._plot_host_layout = QtWidgets.QVBoxLayout(self._plot_host)
         self._plot_host_layout.setContentsMargins(0, 0, 0, 0)
+        self._asd_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="asd")
+        self._asd_future: Future | None = None
+        self._asd_lock = threading.Lock()
+        self._asd_pending_result: AsdComputation | None = None
+        self._asd_results: dict[int, AsdTraceResult] = {}
+        self._asd_revision = 0
+        self._last_asd_request_monotonic = 0.0
 
         self.setWindowTitle("rp_ads1278 Client")
         self.resize(1400, 900)
@@ -85,6 +106,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._build_status_bar())
         layout.addWidget(self._plot_host, 1)
         self._rebuild_plot_widget()
+        self._sync_asd_controls()
 
         self.setCentralWidget(central)
 
@@ -239,6 +261,45 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        layout.addWidget(QtWidgets.QLabel("View"))
+        self.view_mode_combo = QtWidgets.QComboBox()
+        self.view_mode_combo.addItems([VIEW_MODE_TIME, VIEW_MODE_ASD])
+        self.view_mode_combo.setCurrentText(
+            self._settings.value("view_mode", VIEW_MODE_TIME, type=str)
+        )
+        self.view_mode_combo.currentTextChanged.connect(self._on_view_mode_changed)
+        layout.addWidget(self.view_mode_combo)
+
+        layout.addSpacing(8)
+        layout.addWidget(QtWidgets.QLabel("ASD window"))
+        self.asd_window_seconds_input = QtWidgets.QDoubleSpinBox()
+        self.asd_window_seconds_input.setRange(1.0, 600.0)
+        self.asd_window_seconds_input.setDecimals(1)
+        self.asd_window_seconds_input.setSingleStep(10.0)
+        self.asd_window_seconds_input.setSuffix(" s")
+        self.asd_window_seconds_input.setValue(
+            self._settings.value("asd_window_seconds", 60.0, type=float)
+        )
+        self.asd_window_seconds_input.valueChanged.connect(self._on_asd_settings_changed)
+        layout.addWidget(self.asd_window_seconds_input)
+
+        layout.addWidget(QtWidgets.QLabel("refresh"))
+        self.asd_refresh_seconds_input = QtWidgets.QDoubleSpinBox()
+        self.asd_refresh_seconds_input.setRange(0.5, 10.0)
+        self.asd_refresh_seconds_input.setDecimals(1)
+        self.asd_refresh_seconds_input.setSingleStep(0.5)
+        self.asd_refresh_seconds_input.setSuffix(" s")
+        self.asd_refresh_seconds_input.setValue(
+            self._settings.value("asd_refresh_seconds", 2.0, type=float)
+        )
+        self.asd_refresh_seconds_input.valueChanged.connect(self._on_asd_settings_changed)
+        layout.addWidget(self.asd_refresh_seconds_input)
+
+        self.asd_status_label = QtWidgets.QLabel("ASD: idle")
+        layout.addSpacing(8)
+        layout.addWidget(self.asd_status_label)
+
+        layout.addSpacing(16)
         layout.addWidget(QtWidgets.QLabel("Y axis"))
         self.y_unit_combo = QtWidgets.QComboBox()
         self.y_unit_combo.addItems([Y_UNIT_CODES, Y_UNIT_VOLTS])
@@ -365,7 +426,32 @@ class MainWindow(QtWidgets.QMainWindow):
         pg.setConfigOptions(antialias=False)
         graphics = pg.GraphicsLayoutWidget()
         enabled_math_traces = self._enabled_math_traces()
-        if self._is_overlay_plot_mode():
+        if self._is_asd_view_mode():
+            if self._is_overlay_plot_mode():
+                plot = graphics.addPlot(row=0, col=0, title="Selected channel ASD")
+                plot.showGrid(x=True, y=True, alpha=0.25)
+                plot.addLegend(offset=(10, 10))
+                plot.setLogMode(x=True, y=True)
+                self._plots.append(plot)
+                for idx in range(CHANNEL_COUNT):
+                    curve = plot.plot(
+                        pen=pg.mkPen(pg.intColor(idx, hues=8), width=2),
+                        name=f"CH{idx + 1}",
+                    )
+                    curve.setFftMode(False)
+                    self._curves.append(curve)
+            else:
+                for idx in range(CHANNEL_COUNT):
+                    row = idx // 2
+                    col = idx % 2
+                    plot = graphics.addPlot(row=row, col=col, title=f"CH{idx + 1} ASD")
+                    plot.showGrid(x=True, y=True, alpha=0.25)
+                    plot.setLogMode(x=True, y=True)
+                    curve = plot.plot(pen=pg.intColor(idx, hues=8))
+                    curve.setFftMode(False)
+                    self._plots.append(plot)
+                    self._curves.append(curve)
+        elif self._is_overlay_plot_mode():
             plot = graphics.addPlot(row=0, col=0, title="Selected channels")
             plot.showGrid(x=True, y=True, alpha=0.25)
             plot.addLegend(offset=(10, 10))
@@ -512,9 +598,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.capability_label.setText(
             f"capability: {snapshot.capability_line or '-'}"
         )
-        self.logging_label.setText(
-            f"logging: {snapshot.logging_path or 'off'}"
-        )
+        if snapshot.logging_path:
+            if snapshot.logging_remaining_s is not None:
+                remaining_text = format_capture_duration(snapshot.logging_remaining_s)
+                self.logging_label.setText(
+                    f"logging: {snapshot.logging_path} ({remaining_text} left)"
+                )
+            else:
+                self.logging_label.setText(f"logging: {snapshot.logging_path}")
+        else:
+            self.logging_label.setText("logging: off")
         self.status_label.setText(snapshot.status_text)
         self.status_label.setStyleSheet(self._status_style(snapshot.status_level))
 
@@ -541,6 +634,11 @@ class MainWindow(QtWidgets.QMainWindow):
         x_unit = self.x_unit_combo.currentText()
         vref = self.vref_input.value()
         y_scale = vref / ADS1278_FULL_SCALE_CODE if y_unit == Y_UNIT_VOLTS else None
+
+        self._consume_asd_result()
+        if self._is_asd_view_mode():
+            self._refresh_asd(snapshot, divider, vref)
+            return
 
         if self._is_overlay_plot_mode():
             for idx, curve in enumerate(self._curves):
@@ -626,6 +724,128 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             curve.setData(y)
 
+    def _refresh_asd(self, snapshot, divider: int, vref: float) -> None:
+        try:
+            fs_hz = sample_rate_hz(divider)
+        except ValueError:
+            self.asd_status_label.setText("ASD: invalid sample rate")
+            return
+
+        selected_indices = [
+            idx for idx in range(CHANNEL_COUNT) if self._is_channel_selected(idx)
+        ]
+        for idx, curve in enumerate(self._curves):
+            visible = idx in selected_indices
+            curve.setVisible(visible)
+            if not visible:
+                curve.setData([], [])
+                continue
+            result = self._asd_results.get(idx)
+            if result is None:
+                curve.setData([], [])
+            else:
+                curve.setData(result.spectrum.frequencies_hz, result.spectrum.asd)
+
+        if not selected_indices:
+            self.asd_status_label.setText("ASD: no channel selected")
+            return
+
+        available = min(
+            snapshot.asd_channel_history[idx].size for idx in selected_indices
+        )
+        if available < ASD_MIN_SAMPLE_COUNT:
+            self._asd_results.clear()
+            for curve in self._curves:
+                curve.setData([], [])
+            self.asd_status_label.setText(
+                f"ASD: accumulating {available}/{ASD_MIN_SAMPLE_COUNT} samples"
+            )
+            return
+
+        window_samples = max(ASD_MIN_SAMPLE_COUNT, int(self.asd_window_seconds_input.value() * fs_hz))
+        window_samples = min(window_samples, available)
+        now = time.monotonic()
+        refresh_s = self.asd_refresh_seconds_input.value()
+        if self._asd_future is not None and not self._asd_future.done():
+            self.asd_status_label.setText(
+                f"ASD: computing {window_samples / fs_hz:.1f}s window..."
+            )
+            return
+        if now - self._last_asd_request_monotonic < refresh_s and self._asd_results:
+            return
+
+        traces = [
+            AsdTraceRequest(
+                channel_index=idx,
+                label=f"CH{idx + 1}",
+                samples_codes=snapshot.asd_channel_history[idx][-window_samples:].copy(),
+            )
+            for idx in selected_indices
+        ]
+        self._request_asd_compute(
+            traces=traces,
+            fs_hz=fs_hz,
+            reference_volts=vref,
+        )
+
+    def _request_asd_compute(
+        self,
+        *,
+        traces: list[AsdTraceRequest],
+        fs_hz: float,
+        reference_volts: float,
+    ) -> None:
+        if self._asd_future is not None and not self._asd_future.done():
+            return
+        self._asd_revision += 1
+        revision = self._asd_revision
+        self._last_asd_request_monotonic = time.monotonic()
+        self._asd_future = self._asd_executor.submit(
+            compute_asd_traces,
+            revision=revision,
+            traces=traces,
+            fs_hz=fs_hz,
+            reference_volts=reference_volts,
+        )
+        self._asd_future.add_done_callback(self._on_asd_compute_done)
+
+    def _on_asd_compute_done(self, future: Future) -> None:
+        try:
+            result = future.result()
+        except Exception as exc:  # pragma: no cover - defensive worker boundary
+            result = AsdComputation(
+                revision=self._asd_revision,
+                results=(),
+                sample_count=0,
+                duration_s=0.0,
+                compute_ms=0.0,
+                error=str(exc),
+            )
+        with self._asd_lock:
+            self._asd_pending_result = result
+
+    def _consume_asd_result(self) -> None:
+        with self._asd_lock:
+            result = self._asd_pending_result
+            self._asd_pending_result = None
+        if result is None:
+            return
+        if self._asd_future is not None and self._asd_future.done():
+            self._asd_future = None
+        if result.revision < self._asd_revision:
+            return
+        if result.error:
+            self.asd_status_label.setText(f"ASD: {result.error}")
+            return
+        self._asd_results = {
+            trace.channel_index: trace for trace in result.results
+        }
+        self.asd_status_label.setText(
+            "ASD: "
+            f"{result.duration_s:.1f}s, {result.sample_count} samples, "
+            f"{result.compute_ms:.0f} ms"
+        )
+
     def _load_math_traces(self) -> list[MathTrace]:
         return load_math_traces_from_settings(
             self._settings.value("math_traces", "", type=str)
@@ -706,6 +926,8 @@ class MainWindow(QtWidgets.QMainWindow):
         stored = self._settings.value("visible_channels", default, type=list)
         if not isinstance(stored, list) or len(stored) != CHANNEL_COUNT:
             return True
+        if not any(bool(value) for value in stored):
+            return True
         return bool(stored[idx])
 
     def _save_channel_selection(self) -> None:
@@ -730,6 +952,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return (0,)
 
     def _on_channel_toggled(self, idx: int, checked: bool) -> None:
+        if 0 <= idx < len(self._channel_checkboxes):
+            checked = self._channel_checkboxes[idx].isChecked()
         if not checked and sum(checkbox.isChecked() for checkbox in self._channel_checkboxes) == 0:
             checkbox = self._channel_checkboxes[idx]
             checkbox.blockSignals(True)
@@ -746,10 +970,45 @@ class MainWindow(QtWidgets.QMainWindow):
             return layout
         return PLOT_LAYOUT_SEPARATE
 
+    def _is_asd_view_mode(self) -> bool:
+        if hasattr(self, "view_mode_combo"):
+            return self.view_mode_combo.currentText() == VIEW_MODE_ASD
+        return False
+
     def _is_overlay_plot_mode(self) -> bool:
         if hasattr(self, "plot_layout_combo"):
             return self.plot_layout_combo.currentText() == PLOT_LAYOUT_OVERLAY
         return self._load_plot_layout() == PLOT_LAYOUT_OVERLAY
+
+    def _on_view_mode_changed(self, value: str) -> None:
+        if value not in (VIEW_MODE_TIME, VIEW_MODE_ASD):
+            value = VIEW_MODE_TIME
+            self.view_mode_combo.setCurrentText(value)
+        self._settings.setValue("view_mode", value)
+        self._asd_results.clear()
+        self._sync_asd_controls()
+        self._rebuild_plot_widget()
+
+    def _on_asd_settings_changed(self, _value: float) -> None:
+        self._settings.setValue(
+            "asd_window_seconds",
+            self.asd_window_seconds_input.value(),
+        )
+        self._settings.setValue(
+            "asd_refresh_seconds",
+            self.asd_refresh_seconds_input.value(),
+        )
+        self._asd_results.clear()
+        self._last_asd_request_monotonic = 0.0
+
+    def _sync_asd_controls(self) -> None:
+        is_asd = self._is_asd_view_mode()
+        self.asd_window_seconds_input.setEnabled(is_asd)
+        self.asd_refresh_seconds_input.setEnabled(is_asd)
+        self.x_unit_combo.setEnabled(not is_asd)
+        self.y_unit_combo.setEnabled(not is_asd)
+        if is_asd and self.y_unit_combo.currentText() != Y_UNIT_VOLTS:
+            self.y_unit_combo.setCurrentText(Y_UNIT_VOLTS)
 
     def _on_plot_layout_changed(self, value: str) -> None:
         self._settings.setValue("plot_layout", value)
@@ -780,6 +1039,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_axis_labels(self) -> None:
         if not self._plots and not self._math_plots:
+            return
+        if self._is_asd_view_mode():
+            for plot in self._plots:
+                plot.setLabel("left", "ASD (V/sqrt(Hz))")
+                plot.setLabel("bottom", "Frequency (Hz)")
             return
         y_unit = self.y_unit_combo.currentText()
         x_unit = self.x_unit_combo.currentText()
@@ -831,6 +1095,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._controller.shutdown()
+        self._asd_executor.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)
 
 

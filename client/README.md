@@ -20,6 +20,12 @@ Optional test dependencies:
 .venv/bin/python -m pip install -e "./client[dev]"
 ```
 
+Optional live ASD dependencies:
+
+```bash
+.venv/bin/python -m pip install -e "./client[spectrum]"
+```
+
 ## Run
 
 From the repo root:
@@ -43,6 +49,13 @@ fields at zero to log until **Stop CSV**.
 Enable `Plot V/s` to display each trace as volts versus relative seconds instead
 of raw ADC codes versus recent sample index. The voltage conversion uses the
 editable `Vref` value and the time axis follows the reported `EXTCLK_DIV`.
+
+Set **View** to **ASD** to compute a live amplitude spectral density from the
+longer client history buffer using `reference/speckit-1.0.2`. The ASD view plots
+`V/sqrt(Hz)` versus Hz, recomputes on a background worker, and gets smoother as
+the selected ASD window accumulates more samples. Install `./client[spectrum]`
+first; without those optional dependencies the GUI will show an ASD status
+message instead of blocking or crashing.
 
 The current server requires `EXTCLK_DIV >= 3`. The GUI enforces that minimum and
 rejects smaller values before sending them.
