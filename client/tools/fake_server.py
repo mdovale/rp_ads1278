@@ -94,6 +94,18 @@ class FakeAds1278Server:
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))
                 continue
 
+            if opcode in (
+                CommandOpcode.SET_LOCAL_LOG_DURATION,
+                CommandOpcode.SET_LOCAL_LOG_FILENAME,
+                CommandOpcode.STOP_LOCAL_LOG,
+            ):
+                conn.sendall(self.make_message(MessageType.ACK, opcode, value))
+                continue
+
+            if opcode == CommandOpcode.START_LOCAL_LOG and (value & ~0xFF) == 0:
+                conn.sendall(self.make_message(MessageType.ACK, opcode, value))
+                continue
+
             if opcode == CommandOpcode.SET_EXTCLK_DIV and value >= 3:
                 self.extclk_div = value
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))

@@ -11,6 +11,10 @@ class CommandOpcode(IntEnum):
     SET_EXTCLK_DIV = 3
     MARK_CAPTURE = 4
     SET_MOD_DIV = 5
+    START_LOCAL_LOG = 6
+    STOP_LOCAL_LOG = 7
+    SET_LOCAL_LOG_DURATION = 8
+    SET_LOCAL_LOG_FILENAME = 9
 
 
 class MessageType(IntEnum):

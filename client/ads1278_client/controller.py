@@ -4,6 +4,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Deque, List, Optional, Sequence
 
@@ -14,11 +15,18 @@ from .models import Ads1278Message, CommandOpcode, MessageType
 from .protocol import (
     CHANNEL_COUNT,
     SERVER_PORT,
+    normalize_csv_basename,
     pack_mark_capture,
     pack_set_enable,
     pack_set_extclk_div,
+    pack_set_local_log_duration,
+    pack_set_local_log_filename,
     pack_set_modulation_frequency,
+    pack_start_local_log,
+    pack_stop_local_log,
     pack_trigger_sync,
+    resolve_local_csv_path,
+    usb_csv_path_hint,
 )
 from .transport import TransportClient
 
@@ -74,8 +82,15 @@ class ControllerSnapshot:
 @dataclass(frozen=True)
 class PendingLoggingRequest:
     path: Optional[str]
+    filename: str
     duration_s: Optional[float]
     channel_indices: tuple[int, ...]
+    destination: "LogDestination"
+
+
+class LogDestination(Enum):
+    LOCAL_COMPUTER = "local_computer"
+    USB_RED_PITAYA = "usb_red_pitaya"
 
 
 class ClientController:
@@ -101,6 +116,7 @@ class ClientController:
         self._logging_deadline_monotonic: Optional[float] = None
         self._pending_logging_requests: Deque[PendingLoggingRequest] = deque()
         self._logger: Optional[SampleCsvLogger] = None
+        self._logging_destination = LogDestination.LOCAL_COMPUTER
         self._logging_stop_timer: Optional[threading.Timer] = None
         self._transport = TransportClient(
             on_message=self._handle_message,
@@ -143,11 +159,28 @@ class ClientController:
 
     def start_logging(
         self,
-        path: str | Path,
+        filename: str | Path,
         duration_s: float | None = None,
         channel_indices: Sequence[int] | None = None,
+        *,
+        destination: LogDestination = LogDestination.LOCAL_COMPUTER,
+        local_directory: str | Path | None = None,
     ) -> None:
-        logging_path = str(Path(path))
+        candidate = Path(filename)
+        if destination is LogDestination.LOCAL_COMPUTER and local_directory is None and candidate.parent != Path("."):
+            normalized_filename = normalize_csv_basename(candidate.name)
+        else:
+            normalized_filename = normalize_csv_basename(str(filename))
+        if destination is LogDestination.LOCAL_COMPUTER:
+            if local_directory is None:
+                if candidate.parent == Path("."):
+                    logging_path = str(resolve_local_csv_path(Path.cwd(), normalized_filename))
+                else:
+                    logging_path = str(candidate.with_name(normalized_filename))
+            else:
+                logging_path = str(resolve_local_csv_path(local_directory, normalized_filename))
+        else:
+            logging_path = usb_csv_path_hint(normalized_filename)
         duration = self._normalize_logging_duration(duration_s)
         indices = self._normalize_channel_indices(channel_indices)
         with self._lock:
@@ -158,13 +191,20 @@ class ClientController:
             self._logging_path = logging_path
             self._set_logging_deadline_locked(duration)
             self._pending_logging_requests.append(
-                PendingLoggingRequest(logging_path, duration, indices)
+                PendingLoggingRequest(
+                    logging_path,
+                    normalized_filename,
+                    duration,
+                    indices,
+                    destination,
+                )
             )
+            target = "USB CSV capture" if destination is LogDestination.USB_RED_PITAYA else "CSV capture"
             if duration is None:
-                self._status_text = f"Arming CSV capture for {self._logging_path}"
+                self._status_text = f"Arming {target} for {self._logging_path}"
             else:
                 self._status_text = (
-                    f"Arming {format_capture_duration(duration)} CSV capture "
+                    f"Arming {format_capture_duration(duration)} {target} "
                     f"for {self._logging_path}"
                 )
             self._status_level = "info"
@@ -176,12 +216,36 @@ class ClientController:
                 self._close_logger_locked()
             raise
 
-    def stop_logging(self) -> None:
+    def stop_logging(self, timed: bool = False) -> None:
+        send_remote_stop = False
         with self._lock:
+            send_remote_stop = self._logging_destination is LogDestination.USB_RED_PITAYA
             self._cancel_pending_logging_locked()
-            self._close_logger_locked()
-            self._status_text = "CSV logging stopped"
+            if send_remote_stop:
+                self._cancel_logging_timer_locked()
+                self._clear_logging_deadline_locked()
+                self._status_text = (
+                    "Stopping USB CSV after timed capture"
+                    if timed
+                    else "Stopping USB CSV logging"
+                )
+            else:
+                self._close_logger_locked()
+                self._status_text = (
+                    "CSV logging stopped after timed capture"
+                    if timed
+                    else "CSV logging stopped"
+                )
             self._status_level = "info"
+        if send_remote_stop:
+            try:
+                self._transport.send_command(pack_stop_local_log())
+            except Exception as exc:
+                with self._lock:
+                    self._clear_logging_state_locked()
+                    self._status_text = f"Failed to stop USB CSV logging: {exc}"
+                    self._status_level = "error"
+                raise
 
     def get_snapshot(self) -> ControllerSnapshot:
         with self._lock:
@@ -254,6 +318,16 @@ class ClientController:
                         self._pop_pending_logging_request_locked()
                     )
                     return
+                if message.command_opcode is CommandOpcode.START_LOCAL_LOG:
+                    self._handle_remote_logging_started_locked()
+                    return
+                if message.command_opcode is CommandOpcode.STOP_LOCAL_LOG:
+                    self._clear_logging_state_locked()
+                    self._status_text = (
+                        f"USB CSV logging stopped after {message.value} rows"
+                    )
+                    self._status_level = "info"
+                    return
                 self._status_text = (
                     f"ACK {message.opcode_label} value={message.value} seq={message.msg_seq}"
                 )
@@ -261,11 +335,16 @@ class ClientController:
                 return
 
             if message.message_type is MessageType.ERROR:
-                if message.command_opcode is CommandOpcode.MARK_CAPTURE:
+                if message.command_opcode in (
+                    CommandOpcode.MARK_CAPTURE,
+                    CommandOpcode.START_LOCAL_LOG,
+                    CommandOpcode.STOP_LOCAL_LOG,
+                ):
                     pending = self._pop_pending_logging_request_locked()
                     if pending is not None and pending.path is not None:
-                        self._logging_path = ""
-                        self._clear_logging_deadline_locked()
+                        self._clear_logging_state_locked()
+                    elif message.command_opcode is not CommandOpcode.STOP_LOCAL_LOG:
+                        self._clear_logging_state_locked()
                     self._status_text = (
                         f"ERROR {message.opcode_label} value={message.value} seq={message.msg_seq}"
                     )
@@ -297,6 +376,23 @@ class ClientController:
             self._status_text = "Capture marker acknowledged"
             self._status_level = "ok"
             return
+        if request.destination is LogDestination.USB_RED_PITAYA:
+            try:
+                self._transport.send_command(pack_set_local_log_duration(request.duration_s))
+                if request.filename:
+                    for command in pack_set_local_log_filename(request.filename):
+                        self._transport.send_command(command)
+                self._transport.send_command(pack_start_local_log(request.channel_indices))
+            except Exception as exc:
+                self._clear_logging_state_locked()
+                self._status_text = f"Failed to start USB CSV logging: {exc}"
+                self._status_level = "error"
+                return
+            self._logging_path = request.path
+            self._logging_destination = LogDestination.USB_RED_PITAYA
+            self._status_text = f"Waiting for USB CSV logger at {self._logging_path}"
+            self._status_level = "info"
+            return
         try:
             self._logger = SampleCsvLogger(
                 request.path,
@@ -320,6 +416,22 @@ class ClientController:
                 )
             else:
                 self._status_text = f"Logging samples to {self._logging_path}"
+        self._status_level = "ok"
+        self._logging_destination = LogDestination.LOCAL_COMPUTER
+
+    def _handle_remote_logging_started_locked(self) -> None:
+        if self._logging_destination is not LogDestination.USB_RED_PITAYA:
+            self._status_text = "USB CSV logger acknowledged"
+            self._status_level = "ok"
+            return
+        remaining_s = self._logging_remaining_seconds_unlocked()
+        if remaining_s is None:
+            self._status_text = f"Logging samples on {self._logging_path}"
+        else:
+            self._status_text = (
+                f"Logging samples on {self._logging_path} "
+                f"({format_capture_duration(remaining_s)} remaining)"
+            )
         self._status_level = "ok"
 
     def _logging_remaining_seconds_unlocked(self) -> Optional[float]:
@@ -375,7 +487,7 @@ class ClientController:
 
     def _cancel_pending_logging_locked(self) -> None:
         self._pending_logging_requests = deque(
-            PendingLoggingRequest(None, None, ())
+            PendingLoggingRequest(None, "", None, (), LogDestination.LOCAL_COMPUTER)
             for _ in self._pending_logging_requests
         )
 
@@ -394,6 +506,10 @@ class ClientController:
         if self._logging_stop_timer is not None:
             self._logging_stop_timer.cancel()
             self._logging_stop_timer = None
+
+    def _clear_logging_state_locked(self) -> None:
+        self._close_logger_locked()
+        self._logging_destination = LogDestination.LOCAL_COMPUTER
 
     def _close_logger_locked(self, cancel_timer: bool = True) -> None:
         if cancel_timer:

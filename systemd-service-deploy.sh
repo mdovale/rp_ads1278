@@ -14,10 +14,11 @@ SSH_PORT="22"
 ASSUME_YES=0
 DO_REBOOT=1
 FPGAUTIL_PATH="/opt/redpitaya/bin/fpgautil"
-SERVER_PATH="/usr/local/bin/ads1278-server"
+SERVER_PATH="/root/ads1278-server"
 BITSTREAM_PATH="/root/ads1278.bit.bin"
 SERVICE_NAME="ads1278-server"
 REMOTE_DIR="/root"
+LOG_DIR="/mnt/usb/ads1278/logs"
 
 usage() {
   cat <<EOF
@@ -117,6 +118,7 @@ echo -e "${GREEN}Deploying systemd service '${SERVICE_NAME}.service' to RedPitay
 echo "  Target:    $TARGET_USER@$REDPITAYA_IP"
 echo "  Bitstream: $BITSTREAM_PATH"
 echo "  Server:    $SERVER_PATH"
+echo "  Log dir:   $LOG_DIR"
 
 echo -e "${BLUE}Testing SSH connection...${NC}"
 if ! ssh $SSH_OPTS -o ConnectTimeout=5 "$TARGET_USER@$REDPITAYA_IP" "echo ok" &>/dev/null; then
@@ -172,7 +174,12 @@ fi
 START_SCRIPT=$(cat <<SCRIPT
 #!/bin/bash
 ${FPGAUTIL_PATH} -b ${BITSTREAM_PATH} -f Full
-${SERVER_PATH}
+if mountpoint -q /mnt/usb 2>/dev/null; then
+  mkdir -p ${LOG_DIR}
+else
+  echo "USB stick is not mounted at /mnt/usb; USB CSV logging will fail until it is mounted." >&2
+fi
+exec ${SERVER_PATH} --dma-bulk --poll-ms 0 --log-dir ${LOG_DIR}
 SCRIPT
 )
 
@@ -229,4 +236,6 @@ if [[ "$DO_REBOOT" == "1" ]]; then
 else
   echo -e "${GREEN}Done. Reboot the RedPitaya manually to start the service, or run:${NC}"
   echo "  ssh ${TARGET_USER}@${REDPITAYA_IP} 'systemctl start ${SERVICE_NAME}.service'"
+  echo "Mount USB first for CSV logging:"
+  echo "  ssh ${TARGET_USER}@${REDPITAYA_IP} 'mkdir -p /mnt/usb && mount /dev/sda1 /mnt/usb && mkdir -p ${LOG_DIR}'"
 fi

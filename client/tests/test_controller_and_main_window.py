@@ -13,6 +13,7 @@ from PySide6 import QtWidgets
 from ads1278_client.controller import (
     ClientController,
     ControllerSnapshot,
+    LogDestination,
     compose_capture_duration_seconds,
     format_capture_duration,
     split_capture_duration_seconds,
@@ -24,7 +25,15 @@ from ads1278_client.main_window import (
     VIEW_MODE_ASD,
 )
 from ads1278_client.models import Ads1278Message, CommandOpcode, MessageType
-from ads1278_client.protocol import CHANNEL_COUNT, SERVER_PORT, pack_mark_capture
+from ads1278_client.protocol import (
+    CHANNEL_COUNT,
+    SERVER_PORT,
+    pack_mark_capture,
+    pack_set_local_log_duration,
+    pack_set_local_log_filename,
+    pack_start_local_log,
+    pack_stop_local_log,
+)
 from ads1278_client.units import (
     frame_counts_to_relative_seconds,
     raw_codes_to_volts,
@@ -290,6 +299,95 @@ def test_controller_stops_csv_after_timed_capture(
     assert rows[1][1] == "10"
     assert rows[1][2] == "3"
     assert controller.get_snapshot().logging_path == ""
+
+
+def test_controller_arms_server_timed_usb_csv_without_client_timer(monkeypatch) -> None:
+    sent_commands = []
+    timers = []
+
+    class FakeTimer:
+        def __init__(self, interval, function) -> None:
+            timers.append((interval, function))
+
+        def start(self) -> None:
+            return None
+
+        def cancel(self) -> None:
+            return None
+
+    class FakeTransportClient:
+        def __init__(self, on_message, on_connected, on_disconnected, on_error) -> None:
+            self.on_message = on_message
+            self.on_connected = on_connected
+            self.on_disconnected = on_disconnected
+            self.on_error = on_error
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def send_command(self, payload: bytes) -> None:
+            sent_commands.append(payload)
+
+        def is_connected(self) -> bool:
+            return True
+
+    monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
+    monkeypatch.setattr("ads1278_client.controller.threading.Timer", FakeTimer)
+
+    controller = ClientController()
+    controller._handle_connected("RP_CAP:ads1278_v3")
+
+    controller.start_logging(
+        "usb_run",
+        duration_s=2.5,
+        channel_indices=(0, 4, 7),
+        destination=LogDestination.USB_RED_PITAYA,
+    )
+    controller._handle_message(
+        _message(
+            msg_type=MessageType.ACK,
+            msg_seq=9,
+            opcode=CommandOpcode.MARK_CAPTURE,
+            value=0,
+            status_raw=0x00020001,
+        )
+    )
+    controller._handle_message(
+        _message(
+            msg_type=MessageType.ACK,
+            msg_seq=10,
+            opcode=CommandOpcode.START_LOCAL_LOG,
+            value=0x91,
+            status_raw=0x00020001,
+        )
+    )
+
+    assert sent_commands == [
+        pack_mark_capture(),
+        pack_set_local_log_duration(2.5),
+        *pack_set_local_log_filename("usb_run.csv"),
+        pack_start_local_log((0, 4, 7)),
+    ]
+    assert timers == []
+    snapshot = controller.get_snapshot()
+    assert snapshot.logging_path == "USB: /mnt/usb/ads1278/logs/usb_run.csv"
+    assert "Logging samples on" in snapshot.status_text
+
+    controller.stop_logging()
+    assert sent_commands[-1] == pack_stop_local_log()
+    controller._handle_message(
+        _message(
+            msg_type=MessageType.ACK,
+            msg_seq=11,
+            opcode=CommandOpcode.STOP_LOCAL_LOG,
+            value=123,
+            status_raw=0x00020001,
+        )
+    )
+    assert "123 rows" in controller.get_snapshot().status_text
 
 
 def test_controller_ignores_stale_capture_marker_ack(monkeypatch, tmp_path) -> None:

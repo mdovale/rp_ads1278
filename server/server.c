@@ -1,6 +1,7 @@
 #include "server.h"
 
 #include "cmd_parse.h"
+#include "csv_logger.h"
 #include "dma_frame.h"
 #include "protocol.h"
 
@@ -39,12 +40,20 @@ typedef struct {
     ads1278_snapshot snapshot;
     ads1278_cmd_parser parser;
     ads1278_server_stats stats;
+    ads1278_csv_logger local_logger;
+    struct timespec local_log_deadline;
+    uint32_t pending_local_log_duration_s;
+    char pending_local_log_filename[ADS1278_LOCAL_LOG_FILENAME_MAX + 1u];
     uint16_t last_streamed_frame_cnt;
     bool have_snapshot;
+    bool local_log_deadline_valid;
+    bool pending_local_log_filename_valid;
 } ads1278_server_state;
 
 static volatile sig_atomic_t g_stop_requested = 0;
 
+#define ADS1278_LOCAL_LOG_FILENAME_CHUNK_SHIFT 24u
+#define ADS1278_LOCAL_LOG_FILENAME_CHUNK_BYTES 3u
 #define ADS1278_NS_PER_SEC 1000000000ull
 #define ADS1278_NS_PER_MS 1000000ull
 #define ADS1278_NS_PER_US 1000ull
@@ -88,13 +97,14 @@ void ads1278_server_options_init(ads1278_server_options *options)
     options->dma_bulk_mode = false;
     options->dma_base_addr = ADS1278_DMA_PHASE4_DDR_BASE;
     options->dma_buf_size = ADS1278_DMA_PHASE4_DDR_SIZE;
+    options->local_log_dir = ADS1278_LOCAL_LOG_DIR;
 }
 
 void ads1278_server_print_usage(FILE *stream, const char *argv0)
 {
     fprintf(
         stream,
-        "Usage: %s [--port N] [--mem-path PATH] [--poll-ms N] [--snapshot-retries N] [--dma] [--dma-bulk] [--dma-base ADDR] [--dma-size BYTES]\n",
+        "Usage: %s [--port N] [--mem-path PATH] [--poll-ms N] [--snapshot-retries N] [--dma] [--dma-bulk] [--dma-base ADDR] [--dma-size BYTES] [--log-dir PATH]\n",
         argv0
     );
 }
@@ -416,6 +426,71 @@ static uint64_t ads1278_time_until_deadline_ns(const struct timespec *deadline)
     return deadline_ns - now_ns;
 }
 
+static void ads1278_clear_local_log_deadline(ads1278_server_state *state)
+{
+    if (state == NULL) {
+        return;
+    }
+    state->pending_local_log_duration_s = 0u;
+    state->local_log_deadline_valid = false;
+}
+
+static int ads1278_set_local_log_deadline(
+    ads1278_server_state *state,
+    uint32_t duration_s
+)
+{
+    uint64_t now_ns;
+    struct timespec now;
+
+    if (state == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    state->pending_local_log_duration_s = duration_s;
+    state->local_log_deadline_valid = false;
+    if (duration_s == 0u) {
+        return 0;
+    }
+
+    if (ads1278_get_monotonic_time(&now) != 0) {
+        return -1;
+    }
+    now_ns = ads1278_timespec_to_ns(&now);
+    ads1278_ns_to_timespec(now_ns + ((uint64_t)duration_s * ADS1278_NS_PER_SEC), &state->local_log_deadline);
+    state->local_log_deadline_valid = true;
+    return 0;
+}
+
+static bool ads1278_local_log_should_continue_unattended(const ads1278_server_state *state)
+{
+    return state != NULL
+        && state->local_logger.active
+        && state->local_log_deadline_valid;
+}
+
+static bool ads1278_local_log_deadline_expired(const ads1278_server_state *state)
+{
+    return state != NULL
+        && state->local_logger.active
+        && state->local_log_deadline_valid
+        && ads1278_time_until_deadline_ns(&state->local_log_deadline) == 0u;
+}
+
+static uint32_t ads1278_stop_local_log(ads1278_server_state *state)
+{
+    uint32_t rows_written;
+
+    if (state == NULL) {
+        return 0u;
+    }
+
+    rows_written = ads1278_csv_logger_close(&state->local_logger);
+    ads1278_clear_local_log_deadline(state);
+    return rows_written;
+}
+
 int ads1278_server_parse_args(int argc, char **argv, ads1278_server_options *options)
 {
     int index;
@@ -476,6 +551,13 @@ int ads1278_server_parse_args(int argc, char **argv, ads1278_server_options *opt
             if ((index + 1) >= argc || ads1278_parse_u32(argv[++index], &options->dma_buf_size) != 0) {
                 return -1;
             }
+            continue;
+        }
+        if (strcmp(argv[index], "--log-dir") == 0) {
+            if ((index + 1) >= argc) {
+                return -1;
+            }
+            options->local_log_dir = argv[++index];
             continue;
         }
         return -1;
@@ -646,6 +728,13 @@ static int ads1278_send_snapshot_message(
     ads1278_message message;
 
     ads1278_fill_message(state, &message, msg_type, opcode, value);
+    if (msg_type == ADS1278_MSG_SAMPLE
+        && ads1278_csv_logger_write_message(&state->local_logger, &message) != 0) {
+        return -1;
+    }
+    if (client_fd < 0) {
+        return 0;
+    }
     return ads1278_send_all(client_fd, &message, sizeof(message));
 }
 
@@ -668,8 +757,69 @@ static uint32_t ads1278_build_sync_ctrl(uint32_t ctrl_raw)
     return (ctrl_raw & ADS1278_CTRL_ENABLE) | ADS1278_CTRL_SYNC_TRIGGER;
 }
 
-static void ads1278_apply_command(
+static void ads1278_clear_pending_local_log_filename(ads1278_server_state *state)
+{
+    if (state == NULL) {
+        return;
+    }
+    state->pending_local_log_filename[0] = '\0';
+    state->pending_local_log_filename_valid = false;
+}
+
+static int ads1278_apply_pending_local_log_filename_chunk(
     ads1278_server_state *state,
+    uint32_t value
+)
+{
+    unsigned int chunk_index;
+    unsigned int byte_index;
+    size_t offset;
+
+    if (state == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    chunk_index = value >> ADS1278_LOCAL_LOG_FILENAME_CHUNK_SHIFT;
+    if (chunk_index >= 32u) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (chunk_index == 0u) {
+        ads1278_clear_pending_local_log_filename(state);
+    }
+
+    offset = (size_t)chunk_index * ADS1278_LOCAL_LOG_FILENAME_CHUNK_BYTES;
+    if (offset >= sizeof(state->pending_local_log_filename)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    for (byte_index = 0u; byte_index < ADS1278_LOCAL_LOG_FILENAME_CHUNK_BYTES; ++byte_index) {
+        char ch = (char)((value >> (8u * byte_index)) & 0xffu);
+
+        if (ch == '\0') {
+            state->pending_local_log_filename_valid =
+                state->pending_local_log_filename[0] != '\0';
+            return 0;
+        }
+        if (offset + (size_t)byte_index >= ADS1278_LOCAL_LOG_FILENAME_MAX) {
+            errno = EINVAL;
+            return -1;
+        }
+        state->pending_local_log_filename[offset + (size_t)byte_index] = ch;
+    }
+
+    state->pending_local_log_filename[ADS1278_LOCAL_LOG_FILENAME_MAX] = '\0';
+    state->pending_local_log_filename_valid =
+        state->pending_local_log_filename[0] != '\0';
+    return 0;
+}
+
+static int ads1278_apply_command(
+    ads1278_server_state *state,
+    const ads1278_server_options *options,
     const ads1278_command *command
 )
 {
@@ -697,9 +847,42 @@ static void ads1278_apply_command(
     case ADS1278_OPCODE_MARK_CAPTURE:
         /* ACK establishes an ordered capture boundary on the TCP stream. */
         break;
+    case ADS1278_OPCODE_SET_LOCAL_LOG_DURATION:
+        state->pending_local_log_duration_s = command->value;
+        state->local_log_deadline_valid = false;
+        break;
+    case ADS1278_OPCODE_SET_LOCAL_LOG_FILENAME:
+        if (ads1278_apply_pending_local_log_filename_chunk(state, command->value) != 0) {
+            return -1;
+        }
+        break;
+    case ADS1278_OPCODE_START_LOCAL_LOG:
+        if (ads1278_csv_logger_start(
+                &state->local_logger,
+                options != NULL ? options->local_log_dir : ADS1278_LOCAL_LOG_DIR,
+                command->value,
+                state->pending_local_log_filename_valid
+                    ? state->pending_local_log_filename
+                    : NULL
+            ) != 0) {
+            ads1278_clear_pending_local_log_filename(state);
+            return -1;
+        }
+        ads1278_clear_pending_local_log_filename(state);
+        if (ads1278_set_local_log_deadline(state, state->pending_local_log_duration_s) != 0) {
+            ads1278_stop_local_log(state);
+            return -1;
+        }
+        fprintf(stderr, "Started local CSV log: %s\n", state->local_logger.path);
+        break;
+    case ADS1278_OPCODE_STOP_LOCAL_LOG:
+        ads1278_stop_local_log(state);
+        fprintf(stderr, "Stopped local CSV log\n");
+        break;
     default:
         break;
     }
+    return 0;
 }
 
 static void ads1278_reset_client_state(ads1278_server_state *state)
@@ -743,16 +926,39 @@ static int ads1278_handle_new_client(
 static int ads1278_handle_command(
     int client_fd,
     ads1278_server_state *state,
+    const ads1278_server_options *options,
     const ads1278_command *command,
     bool dma_mode,
     unsigned int snapshot_retries
 )
 {
     ads1278_cmd_validation_result validation_result;
+    uint32_t response_value;
 
     validation_result = ads1278_command_validate(command);
     if (validation_result == ADS1278_CMD_VALID) {
-        ads1278_apply_command(state, command);
+        response_value = command->value;
+        if (command->opcode == ADS1278_OPCODE_STOP_LOCAL_LOG) {
+            response_value = state->local_logger.rows_written;
+        }
+        if (ads1278_apply_command(state, options, command) != 0) {
+            if (ads1278_refresh_state_for_response(state, dma_mode, snapshot_retries) != 0) {
+                return -1;
+            }
+            state->stats.rejected_commands += 1u;
+            if (ads1278_send_snapshot_message(
+                    client_fd,
+                    state,
+                    ADS1278_MSG_ERROR,
+                    command->opcode,
+                    command->value
+                ) != 0) {
+                return -1;
+            }
+            perror("local command failed");
+            state->last_streamed_frame_cnt = state->snapshot.frame_cnt;
+            return 0;
+        }
         if (ads1278_refresh_state_for_response(state, dma_mode, snapshot_retries) != 0) {
             return -1;
         }
@@ -762,7 +968,7 @@ static int ads1278_handle_command(
                 state,
                 ADS1278_MSG_ACK,
                 command->opcode,
-                command->value
+                response_value
             ) != 0) {
             return -1;
         }
@@ -793,6 +999,7 @@ static int ads1278_handle_command(
 static int ads1278_consume_socket_bytes(
     int client_fd,
     ads1278_server_state *state,
+    const ads1278_server_options *options,
     const uint8_t *buffer,
     size_t buffer_len,
     bool dma_mode,
@@ -816,7 +1023,7 @@ static int ads1278_consume_socket_bytes(
         );
         offset += consumed;
         if (have_command != 0) {
-            if (ads1278_handle_command(client_fd, state, &command, dma_mode, snapshot_retries) != 0) {
+            if (ads1278_handle_command(client_fd, state, options, &command, dma_mode, snapshot_retries) != 0) {
                 return -1;
             }
         }
@@ -828,6 +1035,7 @@ static int ads1278_consume_socket_bytes(
 static int ads1278_service_client_socket(
     int client_fd,
     ads1278_server_state *state,
+    const ads1278_server_options *options,
     bool dma_mode,
     unsigned int snapshot_retries
 )
@@ -856,6 +1064,7 @@ static int ads1278_service_client_socket(
         if (ads1278_consume_socket_bytes(
                 client_fd,
                 state,
+                options,
                 buffer,
                 (size_t)recv_result,
                 dma_mode,
@@ -1067,6 +1276,28 @@ static int ads1278_send_dma_buffer_bulk(
     );
     header.msg_seq = base_msg_seq;
     state->stats.next_msg_seq = base_msg_seq + (uint32_t)valid_count;
+    if (state->local_logger.active) {
+        for (frame_index = 0u; frame_index < valid_count; ++frame_index) {
+            if (ads1278_csv_logger_write_bulk_frame(
+                    &state->local_logger,
+                    base_msg_seq + (uint32_t)frame_index,
+                    header.ctrl_raw,
+                    header.extclk_div,
+                    header.mod_div,
+                    &frames[frame_index]
+                ) != 0) {
+                free(frames);
+                return -1;
+            }
+        }
+    }
+    if (client_fd < 0) {
+        state->last_streamed_frame_cnt = state->snapshot.frame_cnt;
+        state->stats.dma_frames_streamed += (uint32_t)valid_count;
+        state->stats.dma_bulk_messages_streamed += 1u;
+        free(frames);
+        return 0;
+    }
     if (ads1278_send_all(client_fd, &header, sizeof(header)) != 0
         || ads1278_send_all(client_fd, frames, valid_count * sizeof(*frames)) != 0) {
         free(frames);
@@ -1179,6 +1410,64 @@ static int ads1278_service_dma_buffers(
     return 0;
 }
 
+static int ads1278_maybe_stop_expired_local_log(
+    ads1278_server_state *state,
+    bool dma_mode
+)
+{
+    uint32_t rows_written;
+
+    if (!ads1278_local_log_deadline_expired(state)) {
+        return 0;
+    }
+
+    rows_written = ads1278_stop_local_log(state);
+    if (dma_mode) {
+        ads1278_dma_stop(state);
+    }
+    fprintf(stderr, "Timed local CSV log completed after %u rows\n", rows_written);
+    return 0;
+}
+
+static int ads1278_service_local_log_without_client(
+    ads1278_server_state *state,
+    const ads1278_server_options *options,
+    struct timespec *next_sample_deadline,
+    bool *next_sample_deadline_valid
+)
+{
+    if (ads1278_maybe_stop_expired_local_log(state, options->dma_mode) != 0) {
+        return -1;
+    }
+    if (!state->local_logger.active) {
+        return 0;
+    }
+
+    if (options->dma_mode) {
+        return ads1278_service_dma_buffers(-1, state, options->dma_bulk_mode);
+    }
+
+    if (next_sample_deadline == NULL || next_sample_deadline_valid == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!*next_sample_deadline_valid) {
+        if (ads1278_set_next_sample_deadline(next_sample_deadline, state, options) != 0) {
+            return -1;
+        }
+        *next_sample_deadline_valid = true;
+    }
+    if (ads1278_time_until_deadline_ns(next_sample_deadline) == 0u) {
+        if (ads1278_maybe_send_sample(-1, state, options->snapshot_retries) != 0) {
+            return -1;
+        }
+        if (ads1278_set_next_sample_deadline(next_sample_deadline, state, options) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static void ads1278_close_client(
     int *client_fd,
     ads1278_server_state *state,
@@ -1186,8 +1475,11 @@ static void ads1278_close_client(
 )
 {
     if (*client_fd >= 0) {
-        if (dma_mode) {
+        if (dma_mode && !ads1278_local_log_should_continue_unattended(state)) {
             ads1278_dma_stop(state);
+        }
+        if (!ads1278_local_log_should_continue_unattended(state)) {
+            ads1278_stop_local_log(state);
         }
         close(*client_fd);
         *client_fd = -1;
@@ -1205,6 +1497,7 @@ int ads1278_server_run(const ads1278_server_options *options)
     memset(&state, 0, sizeof(state));
     state.mmio.fd = -1;
     ads1278_dma_state_init(&state.dma);
+    ads1278_csv_logger_init(&state.local_logger);
     ads1278_cmd_parser_init(&state.parser);
     listener_fd = -1;
     client_fd = -1;
@@ -1239,11 +1532,12 @@ int ads1278_server_run(const ads1278_server_options *options)
 
     fprintf(
         stderr,
-        "Listening on port %u using %s%s%s\n",
+        "Listening on port %u using %s%s%s; local CSV dir %s\n",
         (unsigned int)options->port,
         options->mem_path,
         options->dma_mode ? " (DMA mode" : "",
-        options->dma_mode ? (options->dma_bulk_mode ? ", bulk)" : ")") : ""
+        options->dma_mode ? (options->dma_bulk_mode ? ", bulk)" : ")") : "",
+        options->local_log_dir
     );
 
     while (g_stop_requested == 0) {
@@ -1260,6 +1554,35 @@ int ads1278_server_run(const ads1278_server_options *options)
         if (client_fd < 0) {
             FD_SET(listener_fd, &read_fds);
             max_fd = listener_fd;
+            if (state.local_logger.active) {
+                uint64_t timeout_ns;
+
+                if (options->dma_mode) {
+                    timeout_ns = (uint64_t)options->poll_timeout_ms * ADS1278_NS_PER_MS;
+                    if (timeout_ns == 0u) {
+                        timeout_ns = ADS1278_NS_PER_MS;
+                    }
+                } else if (!next_sample_deadline_valid) {
+                    if (ads1278_set_next_sample_deadline(&next_sample_deadline, &state, options) != 0) {
+                        perror("clock_gettime");
+                        break;
+                    }
+                    next_sample_deadline_valid = true;
+                    timeout_ns = ads1278_time_until_deadline_ns(&next_sample_deadline);
+                } else {
+                    timeout_ns = ads1278_time_until_deadline_ns(&next_sample_deadline);
+                }
+                if (state.local_log_deadline_valid) {
+                    uint64_t deadline_ns;
+
+                    deadline_ns = ads1278_time_until_deadline_ns(&state.local_log_deadline);
+                    if (deadline_ns < timeout_ns) {
+                        timeout_ns = deadline_ns;
+                    }
+                }
+                ads1278_ns_to_timeval(timeout_ns, &timeout);
+                timeout_ptr = &timeout;
+            }
         } else {
             uint64_t timeout_ns;
 
@@ -1321,11 +1644,24 @@ int ads1278_server_run(const ads1278_server_options *options)
                     next_sample_deadline_valid = !options->dma_mode;
                 }
             }
+            if (ads1278_service_local_log_without_client(
+                    &state,
+                    options,
+                    &next_sample_deadline,
+                    &next_sample_deadline_valid
+                ) != 0) {
+                perror("local log service");
+                if (options->dma_mode) {
+                    ads1278_dma_stop(&state);
+                }
+                ads1278_stop_local_log(&state);
+                next_sample_deadline_valid = false;
+            }
             continue;
         }
 
         if (select_result > 0 && FD_ISSET(client_fd, &read_fds)) {
-            if (ads1278_service_client_socket(client_fd, &state, options->dma_mode, options->snapshot_retries) != 0) {
+            if (ads1278_service_client_socket(client_fd, &state, options, options->dma_mode, options->snapshot_retries) != 0) {
                 ads1278_close_client(&client_fd, &state, options->dma_mode);
                 next_sample_deadline_valid = false;
                 continue;
@@ -1359,9 +1695,17 @@ int ads1278_server_run(const ads1278_server_options *options)
                 continue;
             }
         }
+
+        if (ads1278_maybe_stop_expired_local_log(&state, options->dma_mode) != 0) {
+            perror("local log deadline");
+            ads1278_close_client(&client_fd, &state, options->dma_mode);
+            next_sample_deadline_valid = false;
+            continue;
+        }
     }
 
     ads1278_close_client(&client_fd, &state, options->dma_mode);
+    ads1278_csv_logger_close(&state.local_logger);
     if (listener_fd >= 0) {
         close(listener_fd);
     }

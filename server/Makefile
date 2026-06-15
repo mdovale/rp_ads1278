@@ -4,8 +4,8 @@ WARNINGS = -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wfor
 CFLAGS ?= -O2
 CFLAGS += $(WARNINGS) $(CFLAGADD)
 
-SERVER_SOURCES = server.c memory_map.c cmd_parse.c
-SERVER_HEADERS = server.h memory_map.h cmd_parse.h protocol.h dma_frame.h
+SERVER_SOURCES = server.c memory_map.c cmd_parse.c csv_logger.c
+SERVER_HEADERS = server.h memory_map.h cmd_parse.h protocol.h dma_frame.h csv_logger.h
 
 .PHONY: all clean test
 
@@ -17,11 +17,12 @@ server: $(SERVER_SOURCES) $(SERVER_HEADERS)
 rpdevmem: rpdevmem.c memory_map.c memory_map.h protocol.h dma_frame.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ rpdevmem.c memory_map.c
 
-test: test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map
+test: test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map test_csv_logger
 	./test_cmd_parse
 	./test_protocol_layout
 	./test_dma_frame_layout
 	./test_memory_map
+	./test_csv_logger
 
 test_cmd_parse: tests/test_cmd_parse.c cmd_parse.c cmd_parse.h protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_cmd_parse.c cmd_parse.c
@@ -35,5 +36,8 @@ test_dma_frame_layout: tests/test_dma_frame_layout.c dma_frame.h
 test_memory_map: tests/test_memory_map.c memory_map.h protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_memory_map.c
 
+test_csv_logger: tests/test_csv_logger.c csv_logger.c csv_logger.h protocol.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_csv_logger.c csv_logger.c
+
 clean:
-	rm -f server rpdevmem test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map
+	rm -f server rpdevmem test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map test_csv_logger

@@ -4,7 +4,6 @@ import sys
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +24,7 @@ from .channel_math import (
 )
 from .controller import (
     ClientController,
+    LogDestination,
     compose_capture_duration_seconds,
     format_capture_duration,
     split_capture_duration_seconds,
@@ -37,6 +37,8 @@ from .protocol import (
     MAX_MODULATION_FREQUENCY_HZ,
     MIN_MODULATION_FREQUENCY_HZ,
     SERVER_PORT,
+    default_csv_basename,
+    LOCAL_LOG_DIR_HINT,
     modulation_divider_to_frequency_hz,
 )
 from .units import sample_rate_hz
@@ -57,6 +59,8 @@ PLOT_LAYOUT_OVERLAY = "Combined"
 VIEW_MODE_TIME = "Time"
 VIEW_MODE_ASD = "ASD"
 ASD_MIN_SAMPLE_COUNT = 256
+CSV_DESTINATION_LOCAL = "This computer"
+CSV_DESTINATION_USB = "USB on Red Pitaya"
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -214,6 +218,48 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         )
         layout.addWidget(self.set_modulation_button)
+
+        layout.addSpacing(16)
+        layout.addWidget(QtWidgets.QLabel("Save CSV to"))
+        self.csv_destination_combo = QtWidgets.QComboBox()
+        self.csv_destination_combo.addItems([CSV_DESTINATION_LOCAL, CSV_DESTINATION_USB])
+        saved_destination = self._settings.value(
+            "csv_destination",
+            CSV_DESTINATION_LOCAL,
+            type=str,
+        )
+        if saved_destination in (CSV_DESTINATION_LOCAL, CSV_DESTINATION_USB):
+            self.csv_destination_combo.setCurrentText(saved_destination)
+        self.csv_destination_combo.currentTextChanged.connect(
+            lambda value: self._settings.setValue("csv_destination", value)
+        )
+        layout.addWidget(self.csv_destination_combo)
+
+        layout.addSpacing(16)
+        layout.addWidget(QtWidgets.QLabel("CSV filename"))
+        self.csv_filename_input = QtWidgets.QLineEdit()
+        self.csv_filename_input.setPlaceholderText(default_csv_basename())
+        self.csv_filename_input.setText(
+            self._settings.value("csv_filename", default_csv_basename(), type=str)
+        )
+        self.csv_filename_input.textChanged.connect(
+            lambda value: self._settings.setValue("csv_filename", value)
+        )
+        layout.addWidget(self.csv_filename_input)
+
+        self.csv_folder_label = QtWidgets.QLabel("CSV folder")
+        layout.addWidget(self.csv_folder_label)
+        self.csv_folder_input = QtWidgets.QLineEdit()
+        self.csv_folder_input.setText(self._load_csv_folder())
+        self.csv_folder_input.textChanged.connect(self._save_csv_folder)
+        layout.addWidget(self.csv_folder_input)
+        self.csv_folder_browse_button = QtWidgets.QPushButton("Browse...")
+        self.csv_folder_browse_button.clicked.connect(self._browse_csv_folder)
+        layout.addWidget(self.csv_folder_browse_button)
+        self.csv_destination_combo.currentTextChanged.connect(
+            self._update_csv_destination_controls
+        )
+        self._update_csv_destination_controls(self.csv_destination_combo.currentText())
 
         layout.addSpacing(16)
         layout.addWidget(QtWidgets.QLabel("CSV duration"))
@@ -520,25 +566,66 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_status(str(exc), "error")
 
     def _start_logging(self) -> None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_path = str(Path.cwd() / f"ads1278_samples_{timestamp}.csv")
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Choose CSV log path",
-            default_path,
-            "CSV files (*.csv)",
-        )
-        if not path:
-            return
         try:
             duration_s = self._selected_csv_duration_seconds()
-            self._controller.start_logging(
-                path,
-                duration_s=duration_s,
-                channel_indices=self._selected_channel_indices(),
-            )
+            channel_indices = self._selected_channel_indices()
+            filename = self.csv_filename_input.text().strip()
+            if not filename:
+                filename = default_csv_basename()
+                self.csv_filename_input.setText(filename)
+            if self.csv_destination_combo.currentText() == CSV_DESTINATION_USB:
+                self._controller.start_logging(
+                    filename,
+                    duration_s=duration_s,
+                    channel_indices=channel_indices,
+                    destination=LogDestination.USB_RED_PITAYA,
+                )
+            else:
+                self._controller.start_logging(
+                    filename,
+                    duration_s=duration_s,
+                    channel_indices=channel_indices,
+                    destination=LogDestination.LOCAL_COMPUTER,
+                    local_directory=self.csv_folder_input.text().strip() or str(Path.cwd()),
+                )
         except Exception as exc:
             self._show_status(str(exc), "error")
+
+    def _load_csv_folder(self) -> str:
+        saved = self._settings.value("csv_folder", "", type=str).strip()
+        if saved:
+            return saved
+        return str(Path.cwd())
+
+    def _save_csv_folder(self) -> None:
+        self._settings.setValue("csv_folder", self.csv_folder_input.text())
+
+    def _browse_csv_folder(self) -> None:
+        selected = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "Choose CSV folder",
+            self.csv_folder_input.text().strip() or str(Path.cwd()),
+        )
+        if not selected:
+            return
+        self.csv_folder_input.setText(selected)
+
+    def _update_csv_destination_controls(self, destination: str) -> None:
+        local_destination = destination == CSV_DESTINATION_LOCAL
+        for widget in (
+            self.csv_folder_label,
+            self.csv_folder_input,
+            self.csv_folder_browse_button,
+        ):
+            widget.setVisible(local_destination)
+        if local_destination:
+            self.csv_filename_input.setToolTip(
+                "Base filename for the CSV on this computer."
+            )
+        else:
+            self.csv_filename_input.setToolTip(
+                f"Base filename written under {LOCAL_LOG_DIR_HINT} on the Red Pitaya USB stick."
+            )
 
     def _load_csv_duration_parts(self) -> tuple[int, int, float]:
         if (
@@ -620,6 +707,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.set_modulation_button,
             self.start_logging_button,
             self.stop_logging_button,
+            self.csv_destination_combo,
+            self.csv_filename_input,
+            self.csv_folder_input,
+            self.csv_folder_browse_button,
             self.csv_duration_hours_input,
             self.csv_duration_minutes_input,
             self.csv_duration_seconds_input,
