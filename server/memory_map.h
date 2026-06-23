@@ -47,7 +47,8 @@ enum {
 
 enum {
     ADS1278_CTRL_SYNC_TRIGGER = 1u << 0,
-    ADS1278_CTRL_ENABLE = 1u << 1
+    ADS1278_CTRL_ENABLE = 1u << 1,
+    ADS1278_CTRL_DEMOD_ENABLE = 1u << 2
 };
 
 enum {

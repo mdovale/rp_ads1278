@@ -12,7 +12,7 @@
 //   0x18  CH7       R    24-bit channel 7 data
 //   0x1C  CH8       R    24-bit channel 8 data
 //   0x20  STATUS    R    [0] drdy_seen  [1] overflow  [31:16] frame_cnt
-//   0x24  CTRL      R/W  [0] sync_trigger (W1C)  [1] enable
+//   0x24  CTRL      R/W  [0] sync_trigger (W1C)  [1] enable  [2] demod_enable
 //   0x28  EXTCLK_DIV R/W half-period in sys-clk cycles (125 MHz / (2*val))
 //   0x2C  FIFO_STATUS R  [15:0] level  [16] empty  [17] full
 //   0x30  FIFO_DROPS  R  Count of frames not queued because the FIFO was full
@@ -133,13 +133,15 @@ logic dma_enable_prev;
 
 // Derived control signals
 logic ctrl_enable;
+logic demod_enable;
 logic sync_trigger;
 logic dma_irq_enable;
 logic dma_irq_pending;
 logic dma_enable_rise;
 
-assign ctrl_enable  = ctrl_reg[1];
-assign sync_trigger = ctrl_reg[0];
+assign ctrl_enable   = ctrl_reg[1];
+assign demod_enable  = ctrl_reg[2];
+assign sync_trigger  = ctrl_reg[0];
 assign dma_phase4_enable = dma_ctrl_reg[0];
 assign dma_phase4_mode = dma_ctrl_reg[2:1];
 assign dma_phase4_base_addr = dma_base_addr_reg
@@ -220,6 +222,7 @@ ads1278_acq_top u_acq (
   .drdy_n_i     (drdy_n_i),
   .sync_n_o     (sync_n_o),
   .extclk_o     (extclk_o),
+  .mod_i        (mod_o),
   .ch_data_0    (ch_data[0]),
   .ch_data_1    (ch_data[1]),
   .ch_data_2    (ch_data[2]),
@@ -236,6 +239,7 @@ ads1278_acq_top u_acq (
   .dma_fifo_empty(dma_fifo_empty),
   .dma_fifo_pop  (dma_fifo_pop),
   .ctrl_enable  (ctrl_enable),
+  .demod_enable (demod_enable),
   .sync_trigger (sync_trigger),
   .extclk_div   (extclk_div_reg)
 );

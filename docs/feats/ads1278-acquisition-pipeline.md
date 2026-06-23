@@ -22,6 +22,7 @@ Current behavior that software or bring-up code can observe:
 - `DOUT1` is sampled on SCLK rising edges.
 - One complete frame is 8 channels x 24 bits = 192 bits.
 - The latched channel ordering is CH1 through CH8.
+- If `CTRL[2]` is set, CH8 carries the held half-cycle demod output computed from CH1 and `mod_o`.
 - The output channel words are zero-extended to 32 bits before they reach the register map.
 - `STATUS[0]` pulses high for one acquisition clock cycle when a frame is latched.
 - `STATUS[1]` becomes sticky if a new `DRDY` falling edge arrives while the pipeline is still waiting or shifting.
@@ -41,6 +42,7 @@ The current `SYNC` path is separate from the SPI capture state machine:
 The acquisition path is owned by `ads1278_acq_top`, which wraps four RTL blocks:
 
 - `ads1278_spi_tdm`: waits for `DRDY`, drives `SCLK`, shifts in 192 bits, latches channels, and reports `new_data`, `frame_cnt`, and `overflow`.
+- `ads1278_demod`: averages CH1 samples by `mod_o` half-cycle and can replace CH8 with `(avg_pos - avg_neg) / 2`.
 - `ads1278_frame_fifo`: queues fixed-size DMA frame records behind the capture path during staged DMA bring-up.
 - `ads1278_extclk_gen`: generates the ADC external clock from the 125 MHz system clock.
 - `ads1278_sync_pulse`: generates a one-shot active-low `SYNC` pulse.
@@ -56,6 +58,7 @@ The acquisition path is owned by `ads1278_acq_top`, which wraps four RTL blocks:
 The wrapper also defines the current software-visible packing:
 
 - each 24-bit channel sample is zero-extended to 32 bits
+- when `CTRL[2]` is set, CH8 is the held demod value instead of raw ADC8
 - `status = {frame_cnt, 14'd0, overflow, new_data}`
 - queued FIFO records use the Phase 2 layout: `frame_count`, `status_raw`, and eight sign-extended 32-bit channels
 

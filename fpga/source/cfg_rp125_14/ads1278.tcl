@@ -28,6 +28,7 @@ set files [list \
  "[file normalize "$origin_dir/rtl/ads1278_dma_fifo_axis.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_dma_phase4.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_acq_top.v"]"\
+ "[file normalize "$origin_dir/rtl/ads1278_demod.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_frame_fifo.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_spi_tdm.v"]"\
  "[file normalize "$origin_dir/rtl/ads1278_extclk_gen.v"]"\

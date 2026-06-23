@@ -26,9 +26,9 @@ The current register map is:
 | `0x10` | `CH5` | R | Channel 5 sample |
 | `0x14` | `CH6` | R | Channel 6 sample |
 | `0x18` | `CH7` | R | Channel 7 sample |
-| `0x1C` | `CH8` | R | Channel 8 sample |
+| `0x1C` | `CH8` | R | Channel 8 sample, or CH1 demod output when `CTRL[2]` is set |
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
-| `0x24` | `CTRL` | R/W | Bit `0` = `sync_trigger`, bit `1` = acquisition enable |
+| `0x24` | `CTRL` | R/W | Bit `0` = `sync_trigger`, bit `1` = acquisition enable, bit `2` = demod enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared half-period divider used by the current clocking path |
 | `0x2C` | `FIFO_STATUS` | R | Bits `[15:0]` = FIFO level in frames, bit `16` = empty, bit `17` = full |
 | `0x30` | `FIFO_DROPS` | R | Count of queued DMA frames dropped because the staged FIFO was full |
@@ -52,6 +52,7 @@ Current read and write semantics:
 - Reading `CH1` through `CH8` returns the last latched 24-bit sample for each channel, zero-extended to 32 bits.
 - Reading `STATUS` returns the current `new_data` pulse, overflow flag, and 16-bit frame counter.
 - Writing `CTRL[1] = 1` enables acquisition and clock generation. Clearing it disables both.
+- Writing `CTRL[2] = 1` replaces CH8 with the held half-cycle demod output from CH1. Clearing it restores raw CH8.
 - Writing `CTRL[0] = 1` triggers a one-shot `SYNC` pulse. The bit auto-clears in hardware on the next bus clock.
 - `EXTCLK_DIV` resets to `625` (`0x271`), which corresponds to a nominal `100 kHz` output from a `125 MHz` input clock using the current divider formula.
 - `FIFO_STATUS` reports staged DMA FIFO occupancy for bring-up and debug without changing the legacy MMIO latest-sample path.
@@ -84,6 +85,7 @@ Control and data flow are:
 3. Those control signals feed `ads1278_acq_top`, which owns the acquisition datapath.
 4. `ads1278_acq_top` instantiates:
    - `ads1278_frame_fifo` for staged DMA buffering
+   - `ads1278_demod` for CH1 half-cycle demod output on CH8 when enabled
    - `ads1278_spi_tdm` for DRDY-triggered 8 x 24-bit capture
    - `ads1278_extclk_gen` for the ADC external clock
    - `ads1278_sync_pulse` for active-low `SYNC`

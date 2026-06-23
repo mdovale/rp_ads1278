@@ -27,9 +27,9 @@ Current server-visible register map:
 | `0x10` | `CH5` | R | Channel 5 sample |
 | `0x14` | `CH6` | R | Channel 6 sample |
 | `0x18` | `CH7` | R | Channel 7 sample |
-| `0x1C` | `CH8` | R | Channel 8 sample |
+| `0x1C` | `CH8` | R | Channel 8 sample, or CH1 demod output when `CTRL[2]` is set |
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
-| `0x24` | `CTRL` | R/W | Bit `0` = one-shot `SYNC` trigger, bit `1` = acquisition enable |
+| `0x24` | `CTRL` | R/W | Bit `0` = one-shot `SYNC` trigger, bit `1` = acquisition enable, bit `2` = demod enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared divider value used by current FPGA clocking logic |
 | `0x5C` | `MOD_DIV` | R/W | Modulation square-wave half-period divider |
 
@@ -66,6 +66,7 @@ Current behavior a server can rely on:
 - `frame_cnt` increments once per latched frame and resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
 - Writing `CTRL[1] = 1` enables both acquisition and the current EXTCLK generator.
+- Writing `CTRL[2] = 1` replaces CH8 with the held half-cycle demod output from CH1. Clearing it restores raw CH8.
 - Writing `CTRL[0] = 1` triggers a one-shot `SYNC` pulse and the bit auto-clears in hardware.
 
 Current behavior a server must account for carefully:
