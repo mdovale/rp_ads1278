@@ -1,5 +1,7 @@
 #include "cmd_parse.h"
 
+#include "csv_logger.h"
+
 #include <string.h>
 
 void ads1278_cmd_parser_init(ads1278_cmd_parser *parser)
@@ -60,7 +62,15 @@ ads1278_cmd_validation_result ads1278_command_validate(const ads1278_command *co
         return ADS1278_CMD_ERR_INVALID_ENABLE_VALUE;
     case ADS1278_OPCODE_TRIGGER_SYNC:
     case ADS1278_OPCODE_MARK_CAPTURE:
+    case ADS1278_OPCODE_STOP_LOCAL_LOG:
+    case ADS1278_OPCODE_SET_LOCAL_LOG_DURATION:
+    case ADS1278_OPCODE_SET_LOCAL_LOG_FILENAME:
         return ADS1278_CMD_VALID;
+    case ADS1278_OPCODE_START_LOCAL_LOG:
+        if ((command->value & ~ADS1278_LOCAL_LOG_CHANNEL_MASK) == 0u) {
+            return ADS1278_CMD_VALID;
+        }
+        return ADS1278_CMD_ERR_INVALID_LOCAL_LOG_MASK;
     case ADS1278_OPCODE_SET_EXTCLK_DIV:
         if (command->value >= 3u) {
             return ADS1278_CMD_VALID;
@@ -89,6 +99,8 @@ const char *ads1278_cmd_validation_result_string(ads1278_cmd_validation_result r
         return "SET_EXTCLK_DIV requires value >= 3";
     case ADS1278_CMD_ERR_INVALID_MOD_DIV:
         return "SET_MOD_DIV requires value 0 or >= 2";
+    case ADS1278_CMD_ERR_INVALID_LOCAL_LOG_MASK:
+        return "START_LOCAL_LOG channel mask must use only bits 0..7";
     default:
         return "invalid command";
     }

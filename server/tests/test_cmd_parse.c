@@ -98,6 +98,30 @@ static void test_modulation_divider_validation(void)
     assert(ads1278_command_validate(&command) == ADS1278_CMD_ERR_INVALID_MOD_DIV);
 }
 
+static void test_local_log_commands_validation(void)
+{
+    ads1278_command command;
+
+    command.opcode = ADS1278_OPCODE_SET_LOCAL_LOG_DURATION;
+    command.value = 3600u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+
+    command.opcode = ADS1278_OPCODE_SET_LOCAL_LOG_FILENAME;
+    command.value = 0x00636261u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+
+    command.opcode = ADS1278_OPCODE_START_LOCAL_LOG;
+    command.value = 0xffu;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+
+    command.value = 0x100u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_ERR_INVALID_LOCAL_LOG_MASK);
+
+    command.opcode = ADS1278_OPCODE_STOP_LOCAL_LOG;
+    command.value = 0u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+}
+
 int main(void)
 {
     test_partial_reads();
@@ -106,5 +130,6 @@ int main(void)
     test_invalid_divider_rejection();
     test_mark_capture_acceptance();
     test_modulation_divider_validation();
+    test_local_log_commands_validation();
     return 0;
 }

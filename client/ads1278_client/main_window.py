@@ -4,7 +4,6 @@ import sys
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +24,7 @@ from .channel_math import (
 )
 from .controller import (
     ClientController,
+    LogDestination,
     compose_capture_duration_seconds,
     format_capture_duration,
     split_capture_duration_seconds,
@@ -37,6 +37,8 @@ from .protocol import (
     MAX_MODULATION_FREQUENCY_HZ,
     MIN_MODULATION_FREQUENCY_HZ,
     SERVER_PORT,
+    default_csv_basename,
+    LOCAL_LOG_DIR_HINT,
     modulation_divider_to_frequency_hz,
     modulation_frequency_to_divider,
 )
@@ -58,6 +60,8 @@ PLOT_LAYOUT_OVERLAY = "Combined"
 VIEW_MODE_TIME = "Time"
 VIEW_MODE_ASD = "ASD"
 ASD_MIN_SAMPLE_COUNT = 256
+CSV_DESTINATION_LOCAL = "This computer"
+CSV_DESTINATION_USB = "USB on Red Pitaya"
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -76,6 +80,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._plot_host = QtWidgets.QWidget()
         self._plot_host_layout = QtWidgets.QVBoxLayout(self._plot_host)
         self._plot_host_layout.setContentsMargins(0, 0, 0, 0)
+        self._plot_host.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+        self._plot_host.setMinimumHeight(240)
         self._asd_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="asd")
         self._asd_future: Future | None = None
         self._asd_lock = threading.Lock()
@@ -85,9 +94,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_asd_request_monotonic = 0.0
         self._mod_enable_user_value = True
         self._mod_settings_dirty = False
+        self._divider_settings_dirty = False
 
         self.setWindowTitle("rp_ads1278 Client")
         self.resize(1400, 900)
+        self.setMinimumSize(720, 480)
         self._build_ui()
 
         self._timer = QtCore.QTimer(self)
@@ -102,106 +113,139 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        layout.addWidget(self._build_connection_bar())
-        layout.addWidget(self._build_command_bar())
-        layout.addWidget(self._build_display_bar())
-        layout.addWidget(self._build_math_bar())
-        layout.addWidget(self._build_status_bar())
-        layout.addWidget(self._plot_host, 1)
+        controls = QtWidgets.QWidget()
+        controls_layout = QtWidgets.QVBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
+        controls_layout.addWidget(self._build_connection_bar())
+        controls_layout.addWidget(self._build_command_bar())
+        controls_layout.addWidget(self._build_display_bar())
+        controls_layout.addWidget(self._build_math_bar())
+        controls_layout.addWidget(self._build_status_bar())
+
+        controls_scroll = QtWidgets.QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        controls_scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        controls_scroll.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        controls_scroll.setWidget(controls)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(controls_scroll)
+        splitter.addWidget(self._plot_host)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([320, 580])
+        layout.addWidget(splitter, 1)
+
         self._rebuild_plot_widget()
         self._sync_asd_controls()
 
         self.setCentralWidget(central)
 
-    def _build_connection_bar(self) -> QtWidgets.QWidget:
+    @staticmethod
+    def _horizontal_toolbar(*rows: QtWidgets.QLayout) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(widget)
+        layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        for row in rows:
+            layout.addLayout(row)
+        return widget
 
-        layout.addWidget(QtWidgets.QLabel("Host"))
+    @staticmethod
+    def _toolbar_row(*items: QtWidgets.QWidget | int | str) -> QtWidgets.QHBoxLayout:
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        for item in items:
+            if item == "stretch":
+                row.addStretch(1)
+            elif isinstance(item, int):
+                row.addSpacing(item)
+            else:
+                row.addWidget(item)
+        return row
+
+    def _build_connection_bar(self) -> QtWidgets.QWidget:
         self.host_input = QtWidgets.QLineEdit(
             self._settings.value("last_host", "127.0.0.1", type=str)
         )
         self.host_input.setPlaceholderText("Red Pitaya host or IP")
-        self.host_input.setMinimumWidth(200)
-        layout.addWidget(self.host_input)
+        self.host_input.setMinimumWidth(160)
+        self.host_input.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
 
-        layout.addWidget(QtWidgets.QLabel("Port"))
         self.port_input = QtWidgets.QSpinBox()
         self.port_input.setRange(1, 65535)
         self.port_input.setValue(self._settings.value("last_port", SERVER_PORT, type=int))
-        layout.addWidget(self.port_input)
 
         self.connect_button = QtWidgets.QPushButton("Connect")
         self.connect_button.clicked.connect(self._toggle_connection)
-        layout.addWidget(self.connect_button)
 
-        layout.addSpacing(12)
-        layout.addWidget(QtWidgets.QLabel("Connection"))
         self.connection_indicator = QtWidgets.QLabel()
         self.connection_indicator.setFixedSize(12, 12)
-        layout.addWidget(self.connection_indicator)
 
-        layout.addSpacing(16)
         self.frame_count_label = QtWidgets.QLabel("frame_cnt: -")
         self.msg_seq_label = QtWidgets.QLabel("msg_seq: -")
         self.enabled_label = QtWidgets.QLabel("enabled: -")
         self.overflow_label = QtWidgets.QLabel("overflow: -")
         self.divider_label = QtWidgets.QLabel("divider: -")
         self.modulation_label = QtWidgets.QLabel("mod: -")
-        for label in (
-            self.frame_count_label,
-            self.msg_seq_label,
-            self.enabled_label,
-            self.overflow_label,
-            self.divider_label,
-            self.modulation_label,
-        ):
-            layout.addWidget(label)
 
-        layout.addStretch(1)
-        return widget
+        return self._horizontal_toolbar(
+            self._toolbar_row(
+                QtWidgets.QLabel("Host"),
+                self.host_input,
+                QtWidgets.QLabel("Port"),
+                self.port_input,
+                self.connect_button,
+                12,
+                QtWidgets.QLabel("Connection"),
+                self.connection_indicator,
+                "stretch",
+            ),
+            self._toolbar_row(
+                self.frame_count_label,
+                self.msg_seq_label,
+                self.enabled_label,
+                self.overflow_label,
+                self.divider_label,
+                self.modulation_label,
+                "stretch",
+            ),
+        )
 
     def _build_command_bar(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-
         self.enable_button = QtWidgets.QPushButton("Enable")
         self.enable_button.clicked.connect(lambda: self._send_command(self._controller.set_enabled, True))
-        layout.addWidget(self.enable_button)
 
         self.disable_button = QtWidgets.QPushButton("Disable")
         self.disable_button.clicked.connect(
             lambda: self._send_command(self._controller.set_enabled, False)
         )
-        layout.addWidget(self.disable_button)
 
         self.sync_button = QtWidgets.QPushButton("SYNC")
         self.sync_button.clicked.connect(lambda: self._send_command(self._controller.trigger_sync))
-        layout.addWidget(self.sync_button)
 
-        layout.addSpacing(16)
-        layout.addWidget(QtWidgets.QLabel("EXTCLK divider"))
         self.divider_input = QtWidgets.QSpinBox()
         self.divider_input.setRange(MIN_EXTCLK_DIV, 1_000_000)
         self.divider_input.setValue(625)
-        layout.addWidget(self.divider_input)
+        self.divider_input.valueChanged.connect(self._on_divider_value_changed)
 
         self.set_divider_button = QtWidgets.QPushButton("Set divider")
-        self.set_divider_button.clicked.connect(
-            lambda: self._send_command(
-                self._controller.set_extclk_div, self.divider_input.value()
-            )
-        )
-        layout.addWidget(self.set_divider_button)
+        self.set_divider_button.clicked.connect(self._send_divider_command)
 
-        layout.addSpacing(16)
         self.modulation_enable_checkbox = QtWidgets.QCheckBox("MOD enable")
         self.modulation_enable_checkbox.setChecked(True)
-        layout.addWidget(self.modulation_enable_checkbox)
 
-        layout.addWidget(QtWidgets.QLabel("MOD freq"))
         self.modulation_frequency_input = QtWidgets.QDoubleSpinBox()
         self.modulation_frequency_input.setRange(
             MIN_MODULATION_FREQUENCY_HZ,
@@ -218,33 +262,67 @@ class MainWindow(QtWidgets.QMainWindow):
         self.modulation_frequency_input.setEnabled(
             self.modulation_enable_checkbox.isChecked()
         )
-        layout.addWidget(self.modulation_frequency_input)
 
         self.set_modulation_button = QtWidgets.QPushButton("Set MOD")
         self.set_modulation_button.clicked.connect(self._send_modulation_command)
-        layout.addWidget(self.set_modulation_button)
 
-        layout.addSpacing(16)
-        layout.addWidget(QtWidgets.QLabel("CSV duration"))
+        self.csv_destination_combo = QtWidgets.QComboBox()
+        self.csv_destination_combo.addItems([CSV_DESTINATION_LOCAL, CSV_DESTINATION_USB])
+        saved_destination = self._settings.value(
+            "csv_destination",
+            CSV_DESTINATION_LOCAL,
+            type=str,
+        )
+        if saved_destination in (CSV_DESTINATION_LOCAL, CSV_DESTINATION_USB):
+            self.csv_destination_combo.setCurrentText(saved_destination)
+        self.csv_destination_combo.currentTextChanged.connect(
+            lambda value: self._settings.setValue("csv_destination", value)
+        )
+
+        self.csv_filename_input = QtWidgets.QLineEdit()
+        self.csv_filename_input.setPlaceholderText(default_csv_basename())
+        self.csv_filename_input.setText(
+            self._settings.value("csv_filename", default_csv_basename(), type=str)
+        )
+        self.csv_filename_input.textChanged.connect(
+            lambda value: self._settings.setValue("csv_filename", value)
+        )
+        self.csv_filename_input.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+
+        self.csv_folder_label = QtWidgets.QLabel("CSV folder")
+        self.csv_folder_input = QtWidgets.QLineEdit()
+        self.csv_folder_input.setText(self._load_csv_folder())
+        self.csv_folder_input.textChanged.connect(self._save_csv_folder)
+        self.csv_folder_input.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.csv_folder_browse_button = QtWidgets.QPushButton("Browse...")
+        self.csv_folder_browse_button.clicked.connect(self._browse_csv_folder)
+        self.csv_destination_combo.currentTextChanged.connect(
+            self._update_csv_destination_controls
+        )
+        self._update_csv_destination_controls(self.csv_destination_combo.currentText())
+
         self.csv_duration_hours_input = QtWidgets.QSpinBox()
         self.csv_duration_hours_input.setRange(0, 99)
         self.csv_duration_hours_input.setSuffix(" h")
         self.csv_duration_hours_input.setToolTip(
             "Timed capture length. Leave all fields at 0 for manual logging."
         )
-        layout.addWidget(self.csv_duration_hours_input)
 
         self.csv_duration_minutes_input = QtWidgets.QSpinBox()
         self.csv_duration_minutes_input.setRange(0, 59)
         self.csv_duration_minutes_input.setSuffix(" m")
-        layout.addWidget(self.csv_duration_minutes_input)
 
         self.csv_duration_seconds_input = QtWidgets.QDoubleSpinBox()
         self.csv_duration_seconds_input.setRange(0.0, 59.999)
         self.csv_duration_seconds_input.setDecimals(3)
         self.csv_duration_seconds_input.setSingleStep(1.0)
         self.csv_duration_seconds_input.setSuffix(" s")
-        layout.addWidget(self.csv_duration_seconds_input)
 
         hours, minutes, seconds = self._load_csv_duration_parts()
         self.csv_duration_hours_input.setValue(hours)
@@ -256,31 +334,54 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.start_logging_button = QtWidgets.QPushButton("Start CSV")
         self.start_logging_button.clicked.connect(self._start_logging)
-        layout.addWidget(self.start_logging_button)
 
         self.stop_logging_button = QtWidgets.QPushButton("Stop CSV")
         self.stop_logging_button.clicked.connect(self._controller.stop_logging)
-        layout.addWidget(self.stop_logging_button)
 
-        layout.addStretch(1)
-        return widget
+        return self._horizontal_toolbar(
+            self._toolbar_row(
+                self.enable_button,
+                self.disable_button,
+                self.sync_button,
+                16,
+                QtWidgets.QLabel("EXTCLK divider"),
+                self.divider_input,
+                self.set_divider_button,
+                16,
+                self.modulation_enable_checkbox,
+                QtWidgets.QLabel("MOD freq"),
+                self.modulation_frequency_input,
+                self.set_modulation_button,
+                "stretch",
+            ),
+            self._toolbar_row(
+                QtWidgets.QLabel("Save CSV to"),
+                self.csv_destination_combo,
+                16,
+                QtWidgets.QLabel("CSV filename"),
+                self.csv_filename_input,
+                self.csv_folder_label,
+                self.csv_folder_input,
+                self.csv_folder_browse_button,
+                16,
+                QtWidgets.QLabel("CSV duration"),
+                self.csv_duration_hours_input,
+                self.csv_duration_minutes_input,
+                self.csv_duration_seconds_input,
+                self.start_logging_button,
+                self.stop_logging_button,
+                "stretch",
+            ),
+        )
 
     def _build_display_bar(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        layout.addWidget(QtWidgets.QLabel("View"))
         self.view_mode_combo = QtWidgets.QComboBox()
         self.view_mode_combo.addItems([VIEW_MODE_TIME, VIEW_MODE_ASD])
         self.view_mode_combo.setCurrentText(
             self._settings.value("view_mode", VIEW_MODE_TIME, type=str)
         )
         self.view_mode_combo.currentTextChanged.connect(self._on_view_mode_changed)
-        layout.addWidget(self.view_mode_combo)
 
-        layout.addSpacing(8)
-        layout.addWidget(QtWidgets.QLabel("ASD window"))
         self.asd_window_seconds_input = QtWidgets.QDoubleSpinBox()
         self.asd_window_seconds_input.setRange(1.0, 600.0)
         self.asd_window_seconds_input.setDecimals(1)
@@ -290,9 +391,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._settings.value("asd_window_seconds", 60.0, type=float)
         )
         self.asd_window_seconds_input.valueChanged.connect(self._on_asd_settings_changed)
-        layout.addWidget(self.asd_window_seconds_input)
 
-        layout.addWidget(QtWidgets.QLabel("refresh"))
         self.asd_refresh_seconds_input = QtWidgets.QDoubleSpinBox()
         self.asd_refresh_seconds_input.setRange(0.5, 10.0)
         self.asd_refresh_seconds_input.setDecimals(1)
@@ -302,24 +401,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._settings.value("asd_refresh_seconds", 2.0, type=float)
         )
         self.asd_refresh_seconds_input.valueChanged.connect(self._on_asd_settings_changed)
-        layout.addWidget(self.asd_refresh_seconds_input)
 
         self.asd_status_label = QtWidgets.QLabel("ASD: idle")
-        layout.addSpacing(8)
-        layout.addWidget(self.asd_status_label)
 
-        layout.addSpacing(16)
-        layout.addWidget(QtWidgets.QLabel("Y axis"))
         self.y_unit_combo = QtWidgets.QComboBox()
         self.y_unit_combo.addItems([Y_UNIT_CODES, Y_UNIT_VOLTS])
         self.y_unit_combo.setCurrentText(
             self._settings.value("y_unit", Y_UNIT_CODES, type=str)
         )
         self.y_unit_combo.currentTextChanged.connect(self._on_y_unit_changed)
-        layout.addWidget(self.y_unit_combo)
 
-        layout.addSpacing(8)
-        layout.addWidget(QtWidgets.QLabel("VREF (V)"))
         self.vref_input = QtWidgets.QDoubleSpinBox()
         self.vref_input.setDecimals(6)
         self.vref_input.setRange(0.000001, 100.0)
@@ -330,20 +421,15 @@ class MainWindow(QtWidgets.QMainWindow):
             "Used to convert 24-bit codes to volts: V = code * VREF / 2^23."
         )
         self.vref_input.valueChanged.connect(self._on_vref_changed)
-        layout.addWidget(self.vref_input)
 
-        layout.addSpacing(16)
-        layout.addWidget(QtWidgets.QLabel("X axis"))
         self.x_unit_combo = QtWidgets.QComboBox()
         self.x_unit_combo.addItems([X_UNIT_SAMPLES, X_UNIT_TIME])
         self.x_unit_combo.setCurrentText(
             self._settings.value("x_unit", X_UNIT_SAMPLES, type=str)
         )
         self.x_unit_combo.currentTextChanged.connect(self._on_x_unit_changed)
-        layout.addWidget(self.x_unit_combo)
 
-        layout.addSpacing(16)
-        layout.addWidget(QtWidgets.QLabel("Channels"))
+        channel_widgets: list[QtWidgets.QWidget] = [QtWidgets.QLabel("Channels")]
         for idx in range(CHANNEL_COUNT):
             checkbox = QtWidgets.QCheckBox(f"CH{idx + 1}")
             checkbox.setChecked(self._load_channel_selected(idx))
@@ -352,25 +438,45 @@ class MainWindow(QtWidgets.QMainWindow):
                     channel_idx, checked
                 )
             )
-            layout.addWidget(checkbox)
             self._channel_checkboxes.append(checkbox)
+            channel_widgets.append(checkbox)
 
-        layout.addSpacing(16)
-        layout.addWidget(QtWidgets.QLabel("Plot layout"))
         self.plot_layout_combo = QtWidgets.QComboBox()
         self.plot_layout_combo.addItems([PLOT_LAYOUT_SEPARATE, PLOT_LAYOUT_OVERLAY])
         self.plot_layout_combo.blockSignals(True)
         self.plot_layout_combo.setCurrentText(self._load_plot_layout())
         self.plot_layout_combo.blockSignals(False)
         self.plot_layout_combo.currentTextChanged.connect(self._on_plot_layout_changed)
-        layout.addWidget(self.plot_layout_combo)
 
         self.sample_rate_label = QtWidgets.QLabel("fs: -")
-        layout.addSpacing(8)
-        layout.addWidget(self.sample_rate_label)
 
-        layout.addStretch(1)
-        return widget
+        return self._horizontal_toolbar(
+            self._toolbar_row(
+                QtWidgets.QLabel("View"),
+                self.view_mode_combo,
+                8,
+                QtWidgets.QLabel("ASD window"),
+                self.asd_window_seconds_input,
+                QtWidgets.QLabel("refresh"),
+                self.asd_refresh_seconds_input,
+                self.asd_status_label,
+                16,
+                QtWidgets.QLabel("Y axis"),
+                self.y_unit_combo,
+                8,
+                QtWidgets.QLabel("VREF (V)"),
+                self.vref_input,
+                16,
+                QtWidgets.QLabel("X axis"),
+                self.x_unit_combo,
+                16,
+                QtWidgets.QLabel("Plot layout"),
+                self.plot_layout_combo,
+                self.sample_rate_label,
+                "stretch",
+            ),
+            self._toolbar_row(*channel_widgets, "stretch"),
+        )
 
     def _build_math_bar(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
@@ -434,6 +540,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         pg.setConfigOptions(antialias=False)
         graphics = pg.GraphicsLayoutWidget()
+        graphics.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+        graphics.setMinimumHeight(200)
         enabled_math_traces = self._enabled_math_traces()
         if self._is_asd_view_mode():
             if self._is_overlay_plot_mode():
@@ -522,6 +633,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.setValue("last_host", host)
         self._settings.setValue("last_port", port)
         self._mod_settings_dirty = False
+        self._divider_settings_dirty = False
+
+    def _on_divider_value_changed(self, _value: int) -> None:
+        self._divider_settings_dirty = True
+
+    def _send_divider_command(self) -> None:
+        self._divider_settings_dirty = True
+        self._send_command(
+            self._controller.set_extclk_div,
+            self.divider_input.value(),
+        )
+
+    def _server_divider_matches_controls(self, extclk_div: int) -> bool:
+        return extclk_div == self.divider_input.value()
 
     def _on_mod_enable_toggled(self, enabled: bool) -> None:
         self._mod_enable_user_value = enabled
@@ -568,25 +693,66 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_status(str(exc), "error")
 
     def _start_logging(self) -> None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_path = str(Path.cwd() / f"ads1278_samples_{timestamp}.csv")
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Choose CSV log path",
-            default_path,
-            "CSV files (*.csv)",
-        )
-        if not path:
-            return
         try:
             duration_s = self._selected_csv_duration_seconds()
-            self._controller.start_logging(
-                path,
-                duration_s=duration_s,
-                channel_indices=self._selected_channel_indices(),
-            )
+            channel_indices = self._selected_channel_indices()
+            filename = self.csv_filename_input.text().strip()
+            if not filename:
+                filename = default_csv_basename()
+                self.csv_filename_input.setText(filename)
+            if self.csv_destination_combo.currentText() == CSV_DESTINATION_USB:
+                self._controller.start_logging(
+                    filename,
+                    duration_s=duration_s,
+                    channel_indices=channel_indices,
+                    destination=LogDestination.USB_RED_PITAYA,
+                )
+            else:
+                self._controller.start_logging(
+                    filename,
+                    duration_s=duration_s,
+                    channel_indices=channel_indices,
+                    destination=LogDestination.LOCAL_COMPUTER,
+                    local_directory=self.csv_folder_input.text().strip() or str(Path.cwd()),
+                )
         except Exception as exc:
             self._show_status(str(exc), "error")
+
+    def _load_csv_folder(self) -> str:
+        saved = self._settings.value("csv_folder", "", type=str).strip()
+        if saved:
+            return saved
+        return str(Path.cwd())
+
+    def _save_csv_folder(self) -> None:
+        self._settings.setValue("csv_folder", self.csv_folder_input.text())
+
+    def _browse_csv_folder(self) -> None:
+        selected = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "Choose CSV folder",
+            self.csv_folder_input.text().strip() or str(Path.cwd()),
+        )
+        if not selected:
+            return
+        self.csv_folder_input.setText(selected)
+
+    def _update_csv_destination_controls(self, destination: str) -> None:
+        local_destination = destination == CSV_DESTINATION_LOCAL
+        for widget in (
+            self.csv_folder_label,
+            self.csv_folder_input,
+            self.csv_folder_browse_button,
+        ):
+            widget.setVisible(local_destination)
+        if local_destination:
+            self.csv_filename_input.setToolTip(
+                "Base filename for the CSV on this computer."
+            )
+        else:
+            self.csv_filename_input.setToolTip(
+                f"Base filename written under {LOCAL_LOG_DIR_HINT} on the Red Pitaya USB stick."
+            )
 
     def _load_csv_duration_parts(self) -> tuple[int, int, float]:
         if (
@@ -642,8 +808,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.modulation_label.setText(f"mod: {modulation_frequency_hz:.3f} Hz")
             else:
                 self.modulation_label.setText("mod: off")
-            if snapshot.connected and not self.divider_input.hasFocus():
-                self.divider_input.setValue(latest.extclk_div)
+            if self._server_divider_matches_controls(latest.extclk_div):
+                self._divider_settings_dirty = False
+            if snapshot.connected and not self._divider_settings_dirty:
+                if self.divider_input.value() != latest.extclk_div:
+                    self.divider_input.blockSignals(True)
+                    self.divider_input.setValue(latest.extclk_div)
+                    self.divider_input.blockSignals(False)
             if self._server_mod_matches_controls(latest.mod_div):
                 self._mod_settings_dirty = False
             if snapshot.connected and not self._mod_settings_dirty:
@@ -679,6 +850,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.set_modulation_button,
             self.start_logging_button,
             self.stop_logging_button,
+            self.csv_destination_combo,
+            self.csv_filename_input,
+            self.csv_folder_input,
+            self.csv_folder_browse_button,
             self.csv_duration_hours_input,
             self.csv_duration_minutes_input,
             self.csv_duration_seconds_input,
@@ -1113,8 +1288,10 @@ class MainWindow(QtWidgets.QMainWindow):
             plot.setLabel("bottom", x_label)
 
     def _effective_divider(self, latest) -> int:
-        # Prefer the divider reported by the server; fall back to the user's
-        # current spinbox value so axis scaling still works pre-connect.
+        # Prefer a pending user edit; otherwise use the server-reported divider,
+        # then fall back to the spinbox for pre-connect axis scaling.
+        if self._divider_settings_dirty:
+            return int(self.divider_input.value())
         if latest is not None and latest.extclk_div >= MIN_EXTCLK_DIV:
             return int(latest.extclk_div)
         return int(self.divider_input.value())
@@ -1151,6 +1328,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _status_style(level: str) -> str:
         color = {"ok": "#0a0", "error": "#c00"}.get(level, "#333")
         return f"color: {color};"
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if self._plot_graphics is not None:
+            self._plot_graphics.updateGeometry()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._controller.shutdown()

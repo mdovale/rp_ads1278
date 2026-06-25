@@ -16,9 +16,11 @@ BUILD_DIR=""
 BINARY_PATH=""
 RPDEVMEM_PATH=""
 TARGET_USER="root"
-TARGET_DIR="/usr/local/bin"
+# /usr/local/bin is often read-only on stock Red Pitaya images; /root is writable.
+TARGET_DIR="/root"
 TARGET_BINARY_NAME="ads1278-server"
 TARGET_RPDEVMEM_NAME="ads1278-rpdevmem"
+LOG_DIR="/mnt/usb/ads1278/logs"
 REDPITAYA_IP="${REDPITAYA_IP:-}"
 SSH_PORT="22"
 FORCE=0
@@ -33,7 +35,7 @@ Options:
   --binary PATH      Explicit path to server binary
   --rpdevmem PATH    Explicit path to rpdevmem (default: DIR/rpdevmem next to server)
   --user USER        SSH user [default: root]
-  --target-dir DIR   Target directory on RedPitaya [default: /usr/local/bin]
+  --target-dir DIR   Target directory on RedPitaya [default: /root]
   --target-name NAME Deployed server name [default: ads1278-server]
   --target-rpdevmem-name NAME  Deployed rpdevmem name [default: ads1278-rpdevmem]
   --port PORT        SSH port [default: 22]
@@ -220,8 +222,14 @@ echo "Server target: $TARGET_USER@$REDPITAYA_IP:$TARGET_DIR/$TARGET_BINARY_NAME"
 echo "rpdevmem source: $RPDEVMEM_PATH"
 echo "rpdevmem target: $TARGET_USER@$REDPITAYA_IP:$TARGET_DIR/$TARGET_RPDEVMEM_NAME"
 
+echo -e "${BLUE}Stopping any running ads1278-server...${NC}"
+ssh -p "$SSH_PORT" "$TARGET_USER@$REDPITAYA_IP" "pkill -x '$TARGET_BINARY_NAME' >/dev/null 2>&1 || true"
+
 echo -e "${BLUE}Creating target directory...${NC}"
 ssh -p "$SSH_PORT" "$TARGET_USER@$REDPITAYA_IP" "mkdir -p '$TARGET_DIR'"
+
+echo -e "${BLUE}Checking USB log directory...${NC}"
+ssh -p "$SSH_PORT" "$TARGET_USER@$REDPITAYA_IP" "if mountpoint -q /mnt/usb 2>/dev/null; then mkdir -p '$LOG_DIR' && echo 'USB log directory ready: $LOG_DIR'; else echo 'USB is not mounted at /mnt/usb; mount it before starting USB CSV logging.'; fi"
 
 echo -e "${BLUE}Copying binaries...${NC}"
 scp -P "$SSH_PORT" "$BINARY_PATH" "$TARGET_USER@$REDPITAYA_IP:$TARGET_DIR/$TARGET_BINARY_NAME"
@@ -231,6 +239,14 @@ echo -e "${BLUE}Setting permissions...${NC}"
 ssh -p "$SSH_PORT" "$TARGET_USER@$REDPITAYA_IP" "chmod +x '$TARGET_DIR/$TARGET_BINARY_NAME' '$TARGET_DIR/$TARGET_RPDEVMEM_NAME'"
 
 echo -e "${GREEN}Deployment completed successfully.${NC}"
-echo "Run on device:"
-echo "  ssh -p $SSH_PORT $TARGET_USER@$REDPITAYA_IP '$TARGET_DIR/$TARGET_BINARY_NAME'"
+PATH_SERVER="$(ssh -p "$SSH_PORT" "$TARGET_USER@$REDPITAYA_IP" "command -v '$TARGET_BINARY_NAME' 2>/dev/null || true")"
+if [[ -n "$PATH_SERVER" && "$PATH_SERVER" != "$TARGET_DIR/$TARGET_BINARY_NAME" ]]; then
+  echo -e "${YELLOW}Warning: '$TARGET_BINARY_NAME' in PATH is $PATH_SERVER (older install).${NC}"
+  echo -e "${YELLOW}Use the full path below so USB CSV logging opcodes are available.${NC}"
+fi
+echo "Mount USB before capture:"
+echo "  ssh -p $SSH_PORT $TARGET_USER@$REDPITAYA_IP 'mkdir -p /mnt/usb && mount /dev/sda1 /mnt/usb && mkdir -p $LOG_DIR'"
+echo "Run on device (use full path):"
+echo "  ssh -p $SSH_PORT $TARGET_USER@$REDPITAYA_IP '$TARGET_DIR/$TARGET_BINARY_NAME --dma-bulk --poll-ms 0 --log-dir $LOG_DIR'"
 echo "  ssh -p $SSH_PORT $TARGET_USER@$REDPITAYA_IP '$TARGET_DIR/$TARGET_RPDEVMEM_NAME snapshot'"
+echo "USB CSV logs: $LOG_DIR"

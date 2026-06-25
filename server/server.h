@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include "memory_map.h"
+#include "csv_logger.h"
 
 #define ADS1278_SERVER_LISTEN_BACKLOG 4
 /* Upper bound on client-loop sleep; actual sample checks also follow EXTCLK_DIV. */
@@ -20,6 +21,7 @@ typedef struct {
     bool dma_bulk_mode;
     uint32_t dma_base_addr;
     uint32_t dma_buf_size;
+    const char *local_log_dir;
 } ads1278_server_options;
 
 typedef struct {

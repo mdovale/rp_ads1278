@@ -13,6 +13,7 @@ from PySide6 import QtWidgets
 from ads1278_client.controller import (
     ClientController,
     ControllerSnapshot,
+    LogDestination,
     compose_capture_duration_seconds,
     format_capture_duration,
     split_capture_duration_seconds,
@@ -29,8 +30,12 @@ from ads1278_client.protocol import (
     DEFAULT_MODULATION_FREQUENCY_HZ,
     SERVER_PORT,
     pack_mark_capture,
+    pack_set_local_log_duration,
+    pack_set_local_log_filename,
     pack_set_modulation_div,
     pack_set_modulation_frequency,
+    pack_start_local_log,
+    pack_stop_local_log,
 )
 from ads1278_client.units import (
     frame_counts_to_relative_seconds,
@@ -328,6 +333,95 @@ def test_controller_stops_csv_after_timed_capture(
     assert rows[1][1] == "10"
     assert rows[1][2] == "3"
     assert controller.get_snapshot().logging_path == ""
+
+
+def test_controller_arms_server_timed_usb_csv_without_client_timer(monkeypatch) -> None:
+    sent_commands = []
+    timers = []
+
+    class FakeTimer:
+        def __init__(self, interval, function) -> None:
+            timers.append((interval, function))
+
+        def start(self) -> None:
+            return None
+
+        def cancel(self) -> None:
+            return None
+
+    class FakeTransportClient:
+        def __init__(self, on_message, on_connected, on_disconnected, on_error) -> None:
+            self.on_message = on_message
+            self.on_connected = on_connected
+            self.on_disconnected = on_disconnected
+            self.on_error = on_error
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def send_command(self, payload: bytes) -> None:
+            sent_commands.append(payload)
+
+        def is_connected(self) -> bool:
+            return True
+
+    monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
+    monkeypatch.setattr("ads1278_client.controller.threading.Timer", FakeTimer)
+
+    controller = ClientController()
+    controller._handle_connected("RP_CAP:ads1278_v3")
+
+    controller.start_logging(
+        "usb_run",
+        duration_s=2.5,
+        channel_indices=(0, 4, 7),
+        destination=LogDestination.USB_RED_PITAYA,
+    )
+    controller._handle_message(
+        _message(
+            msg_type=MessageType.ACK,
+            msg_seq=9,
+            opcode=CommandOpcode.MARK_CAPTURE,
+            value=0,
+            status_raw=0x00020001,
+        )
+    )
+    controller._handle_message(
+        _message(
+            msg_type=MessageType.ACK,
+            msg_seq=10,
+            opcode=CommandOpcode.START_LOCAL_LOG,
+            value=0x91,
+            status_raw=0x00020001,
+        )
+    )
+
+    assert sent_commands == [
+        pack_mark_capture(),
+        pack_set_local_log_duration(2.5),
+        *pack_set_local_log_filename("usb_run.csv"),
+        pack_start_local_log((0, 4, 7)),
+    ]
+    assert timers == []
+    snapshot = controller.get_snapshot()
+    assert snapshot.logging_path == "USB: /mnt/usb/ads1278/logs/usb_run.csv"
+    assert "Logging samples on" in snapshot.status_text
+
+    controller.stop_logging()
+    assert sent_commands[-1] == pack_stop_local_log()
+    controller._handle_message(
+        _message(
+            msg_type=MessageType.ACK,
+            msg_seq=11,
+            opcode=CommandOpcode.STOP_LOCAL_LOG,
+            value=123,
+            status_raw=0x00020001,
+        )
+    )
+    assert "123 rows" in controller.get_snapshot().status_text
 
 
 def test_controller_ignores_stale_capture_marker_ack(monkeypatch, tmp_path) -> None:
@@ -725,16 +819,167 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
-    monkeypatch.setattr(QtWidgets.QSpinBox, "hasFocus", lambda self: True)
 
     window = MainWindow()
     try:
+        window.divider_input.blockSignals(True)
         window.divider_input.setValue(1000)
+        window.divider_input.blockSignals(False)
+        window._divider_settings_dirty = True
 
         window._refresh()
 
         assert window.divider_label.text() == "divider: 625"
         assert window.divider_input.value() == 1000
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_refresh_preserves_pending_divider_after_set_click(monkeypatch) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    snapshot = ControllerSnapshot(
+        connected=True,
+        host="127.0.0.1",
+        port=SERVER_PORT,
+        capability_line="RP_CAP:ads1278_v3",
+        latest_message=_message(extclk_div=625),
+        status_text="Connected",
+        status_level="ok",
+        logging_path="",
+        logging_remaining_s=None,
+        channel_history=_empty_history(),
+        asd_channel_history=_empty_asd_history(),
+        frame_history=_empty_frame_history(),
+    )
+
+    class FakeController:
+        def get_snapshot(self) -> ControllerSnapshot:
+            return snapshot
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def set_enabled(self, enabled: bool) -> None:
+            return None
+
+        def trigger_sync(self) -> None:
+            return None
+
+        def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
+            return None
+
+        def start_logging(
+            self,
+            path: str,
+            duration_s: float | None = None,
+            channel_indices=None,
+        ) -> None:
+            return None
+
+        def stop_logging(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
+    monkeypatch.setattr(QtWidgets.QSpinBox, "hasFocus", lambda self: False)
+
+    window = MainWindow()
+    try:
+        window.divider_input.blockSignals(True)
+        window.divider_input.setValue(1000)
+        window.divider_input.blockSignals(False)
+        window._send_divider_command()
+
+        window._refresh()
+
+        assert window.divider_label.text() == "divider: 625"
+        assert window.divider_input.value() == 1000
+        assert window._divider_settings_dirty is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_refresh_clears_divider_dirty_when_server_matches(monkeypatch) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    snapshot_holder = {"extclk_div": 625}
+
+    def make_snapshot() -> ControllerSnapshot:
+        return ControllerSnapshot(
+            connected=True,
+            host="127.0.0.1",
+            port=SERVER_PORT,
+            capability_line="RP_CAP:ads1278_v3",
+            latest_message=_message(extclk_div=snapshot_holder["extclk_div"]),
+            status_text="Connected",
+            status_level="ok",
+            logging_path="",
+            logging_remaining_s=None,
+            channel_history=_empty_history(),
+            asd_channel_history=_empty_asd_history(),
+            frame_history=_empty_frame_history(),
+        )
+
+    class FakeController:
+        def get_snapshot(self) -> ControllerSnapshot:
+            return make_snapshot()
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def set_enabled(self, enabled: bool) -> None:
+            return None
+
+        def trigger_sync(self) -> None:
+            return None
+
+        def set_extclk_div(self, divider: int) -> None:
+            snapshot_holder["extclk_div"] = divider
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
+            return None
+
+        def start_logging(
+            self,
+            path: str,
+            duration_s: float | None = None,
+            channel_indices=None,
+        ) -> None:
+            return None
+
+        def stop_logging(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
+
+    window = MainWindow()
+    try:
+        window.divider_input.blockSignals(True)
+        window.divider_input.setValue(1000)
+        window.divider_input.blockSignals(False)
+        window._send_divider_command()
+        snapshot_holder["extclk_div"] = 1000
+
+        window._refresh()
+
+        assert window.divider_label.text() == "divider: 1000"
+        assert window.divider_input.value() == 1000
+        assert window._divider_settings_dirty is False
     finally:
         window.close()
         app.processEvents()

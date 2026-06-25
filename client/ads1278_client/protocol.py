@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import math
+import re
 import struct
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Sequence
 
 from .models import Ads1278Message, CommandOpcode, MessageType
@@ -17,6 +21,13 @@ MODULATION_CLOCK_HZ = 125_000_000.0
 DEFAULT_MODULATION_FREQUENCY_HZ = 10.0
 MIN_MODULATION_FREQUENCY_HZ = 0.1
 MAX_MODULATION_FREQUENCY_HZ = 100_000.0
+LOCAL_LOG_DIR_HINT = "/mnt/usb/ads1278/logs"
+LOCAL_LOG_PATH_HINT = f"{LOCAL_LOG_DIR_HINT}/<filename>.csv"
+LOCAL_LOG_DEFAULT_FILENAME_PREFIX = "ads1278"
+MAX_LOCAL_LOG_FILENAME_LEN = 63
+_LOCAL_LOG_FILENAME_CHUNK_SHIFT = 24
+_LOCAL_LOG_FILENAME_CHUNK_BYTES = 3
+_LOCAL_LOG_FILENAME_SAFE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 COMMAND_SIZE = 8
 MESSAGE_SIZE = 64
 BULK_FRAME_SIZE = 40
@@ -103,6 +114,100 @@ def pack_trigger_sync() -> bytes:
 
 def pack_mark_capture() -> bytes:
     return pack_command(CommandOpcode.MARK_CAPTURE, 0)
+
+
+def channel_indices_to_mask(channel_indices: Sequence[int] | None = None) -> int:
+    if channel_indices is None:
+        return 0
+    mask = 0
+    for idx in channel_indices:
+        channel_idx = int(idx)
+        if channel_idx < 0 or channel_idx >= CHANNEL_COUNT:
+            raise ValueError(f"channel index out of range: {channel_idx}")
+        mask |= 1 << channel_idx
+    if mask == 0:
+        raise ValueError("at least one channel is required")
+    return mask
+
+
+def default_csv_basename(now: datetime | None = None) -> str:
+    timestamp = now or datetime.now(timezone.utc)
+    return (
+        f"{LOCAL_LOG_DEFAULT_FILENAME_PREFIX}_"
+        f"{timestamp.strftime('%Y%m%d_%H%M%S')}.csv"
+    )
+
+
+def normalize_csv_basename(name: str) -> str:
+    stem = str(name).strip()
+    if not stem:
+        raise ValueError("CSV filename is required")
+    if "/" in stem or "\\" in stem:
+        raise ValueError("CSV filename must not contain path separators")
+    stem = Path(stem).name
+    if stem in ("", ".", ".."):
+        raise ValueError("CSV filename is required")
+    if not stem.lower().endswith(".csv"):
+        stem = f"{stem}.csv"
+    if len(stem) > MAX_LOCAL_LOG_FILENAME_LEN:
+        raise ValueError(
+            f"CSV filename must be at most {MAX_LOCAL_LOG_FILENAME_LEN} characters"
+        )
+    if not _LOCAL_LOG_FILENAME_SAFE_RE.match(stem):
+        raise ValueError(
+            "CSV filename may contain only letters, numbers, dots, underscores, and dashes"
+        )
+    return stem
+
+
+def resolve_local_csv_path(directory: str | Path, basename: str) -> Path:
+    normalized = normalize_csv_basename(basename)
+    folder = Path(directory).expanduser()
+    if not folder.is_absolute():
+        folder = Path.cwd() / folder
+    return folder / normalized
+
+
+def usb_csv_path_hint(basename: str) -> str:
+    normalized = normalize_csv_basename(basename)
+    return f"USB: {LOCAL_LOG_DIR_HINT}/{normalized}"
+
+
+def pack_set_local_log_filename(basename: str) -> list[bytes]:
+    normalized = normalize_csv_basename(basename)
+    encoded = normalized.encode("ascii")
+    chunks: list[bytes] = [
+        encoded[index : index + _LOCAL_LOG_FILENAME_CHUNK_BYTES]
+        for index in range(0, len(encoded), _LOCAL_LOG_FILENAME_CHUNK_BYTES)
+    ]
+    if not chunks or len(chunks[-1]) == _LOCAL_LOG_FILENAME_CHUNK_BYTES:
+        chunks.append(b"")
+    commands: list[bytes] = []
+    for chunk_index, chunk_bytes in enumerate(chunks):
+        padded = (chunk_bytes + b"\0\0\0")[:_LOCAL_LOG_FILENAME_CHUNK_BYTES]
+        packed = int.from_bytes(padded, "little")
+        value = (chunk_index << _LOCAL_LOG_FILENAME_CHUNK_SHIFT) | (packed & 0x00FFFFFF)
+        commands.append(pack_command(CommandOpcode.SET_LOCAL_LOG_FILENAME, value))
+    return commands
+
+
+def pack_start_local_log(channel_indices: Sequence[int] | None = None) -> bytes:
+    return pack_command(
+        CommandOpcode.START_LOCAL_LOG,
+        channel_indices_to_mask(channel_indices),
+    )
+
+
+def pack_set_local_log_duration(duration_s: float | None) -> bytes:
+    if duration_s is None or duration_s <= 0.0:
+        duration = 0
+    else:
+        duration = int(math.ceil(float(duration_s)))
+    return pack_command(CommandOpcode.SET_LOCAL_LOG_DURATION, duration)
+
+
+def pack_stop_local_log() -> bytes:
+    return pack_command(CommandOpcode.STOP_LOCAL_LOG, 0)
 
 
 def pack_set_extclk_div(divider: int) -> bytes:

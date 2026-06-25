@@ -4,11 +4,11 @@ This doc covers the current `client/` layer in `rp_ads1278`: a Python desktop GU
 
 ## Goal
 
-Provide a small host-side bring-up client that makes the current server stream observable and controllable while accepting both legacy single-sample messages and DMA bulk batches.
+Provide a small host-side bring-up client that makes the current server stream observable and controllable while accepting both legacy single-sample messages and DMA bulk batches, with CSV logging either on the host computer or on a USB stick mounted by the Red Pitaya server.
 
 ## Scope
 
-- In scope: local desktop execution, one TCP connection to one server, capability-line validation, binary message parsing, bulk sample expansion, live plotting, optional live ASD plotting, enable/disable, `SYNC`, divider, modulation frequency controls, and manual or timed CSV logging for `SAMPLE` messages.
+- In scope: local desktop execution, one TCP connection to one server, capability-line validation, binary message parsing, bulk sample expansion, live plotting, optional live ASD plotting, enable/disable, `SYNC`, divider, modulation frequency controls, and manual or timed CSV logging for `SAMPLE` messages on either this computer or a Red Pitaya-mounted USB stick.
 - Out of scope: multi-device control, offline import, derived DSP views beyond ASD, timing-accurate recording, and guaranteed gap-free history capture.
 
 ## User-facing behavior
@@ -37,9 +37,12 @@ Current runtime behavior is:
   responsive.
 - `Enable`, `Disable`, `SYNC`, `Set divider`, and `Set MOD` send the documented binary commands to the server. The **MOD enable** checkbox immediately sends `MOD_DIV = 0` when unchecked, which holds the MOD output high.
 - `ACK` and `ERROR` update the displayed state immediately and also surface a visible status line that includes the echoed opcode and value.
-- CSV logging writes rows only for in-memory `SAMPLE` messages and includes host timestamp plus server metadata and all eight channels. Bulk batches are expanded to `SAMPLE` objects before logging.
-- CSV logging can run manually until `Stop CSV` or for a positive duration entered as hours, minutes, and seconds. Timed capture starts its countdown after the `MARK_CAPTURE` ACK opens the CSV logger.
-- Logging stops cleanly on manual stop, timed capture expiry, or disconnect.
+- The **Save CSV to** selector chooses between `This computer` and `USB on Red Pitaya`.
+- **CSV filename** sets the basename before capture starts. For local logging, **CSV folder** chooses where the file is written. For USB logging, the server writes that basename under `/mnt/usb/ads1278/logs`.
+- Local computer CSV logging writes rows only for in-memory `SAMPLE` messages and includes host timestamp plus server metadata and selected channels. Bulk batches are expanded to `SAMPLE` objects before logging.
+- USB CSV logging sends `SET_LOCAL_LOG_DURATION`, `SET_LOCAL_LOG_FILENAME`, and `START_LOCAL_LOG` after the `MARK_CAPTURE` ACK. The server writes rows to the USB stick and returns the row count when `STOP_LOCAL_LOG` is ACKed.
+- CSV logging can run manually until `Stop CSV` or for a positive duration entered as hours, minutes, and seconds. Host-side timed capture is stopped by the client timer; USB timed capture is stopped by the server timer.
+- Host-side logging stops cleanly on manual stop, timed capture expiry, or disconnect. USB timed logging continues after disconnect until the server-side deadline expires; USB manual logging closes on disconnect.
 
 ## Architecture
 
@@ -47,7 +50,7 @@ The current client intentionally mirrors the same small-file structure used in t
 
 1. `client/main.py` is the source entry point and launches the Qt application.
 2. `ads1278_client/main_window.py` owns the PySide6 window, connection and command widgets, logging actions, and eight `pyqtgraph` plots.
-3. `ads1278_client/controller.py` owns the latest displayed state, channel history buffers, ASD history buffers, command dispatch, and logger lifecycle.
+3. `ads1278_client/controller.py` owns the latest displayed state, channel history buffers, ASD history buffers, command dispatch, local logger lifecycle, and USB logging command flow.
 4. `ads1278_client/transport.py` owns the background socket thread, capability-line read, fixed-size message framing, and serialized command writes.
 5. `ads1278_client/protocol.py` owns the exact command/message structs, incremental handshake parsing, and binary decoding helpers.
 6. `ads1278_client/csv_logger.py` owns CSV file creation, header writing, row writing, flushes, and close behavior.
@@ -59,9 +62,9 @@ The connection lifecycle is:
 2. The controller starts a background transport worker.
 3. The worker connects to the configured host and port, reads until newline, validates the capability line, and forwards any binary remainder into the message parser.
 4. The worker parses 64-byte single-message headers, waits for any `BULK_SAMPLES` payload bytes, and pushes expanded `Ads1278Message` objects back to the controller.
-5. The controller updates the latest snapshot for all message types, appends time-plot and ASD history data only for `SAMPLE`, and logs only `SAMPLE` rows when CSV logging is active. If a CSV duration was requested, the controller starts the stop timer only after the capture marker is acknowledged.
+5. The controller updates the latest snapshot for all message types, appends time-plot and ASD history data only for `SAMPLE`, and logs only `SAMPLE` rows when host-side CSV logging is active. If USB logging was selected, the controller sends the duration, filename chunks, and start command after the capture marker ACK and waits for the server ACK before reporting logging active.
 6. The Qt GUI polls a thread-safe controller snapshot on a timer and updates labels and plots on the main thread.
-7. On disconnect or transport failure, the worker stops, the controller closes any active CSV logger, and the GUI returns to the disconnected state.
+7. On disconnect or transport failure, the worker stops, the controller closes any active host-side CSV logger, and the GUI returns to the disconnected state. Timed USB CSV logging continues on the server after disconnect.
 
 ## Known risk areas
 
@@ -74,6 +77,7 @@ The connection lifecycle is:
 - The live ASD view is computed from the client-side stream buffer. It is useful
   for quick noise inspection, but it is not a substitute for logged, offline
   analysis when gap-free records or very low-frequency confidence are required.
+- USB CSV logging requires the Red Pitaya server to be running independently of SSH, preferably via systemd, and requires the stick to be mounted at `/mnt/usb` before capture starts.
 
 ## Manual QA
 
@@ -90,6 +94,8 @@ The connection lifecycle is:
 - Clear **MOD enable** and confirm the status line shows `ACK SET_MOD_DIV value=0` and `mod: off`.
 - Start manual CSV logging, re-enable streaming, and confirm the file contains only `SAMPLE` rows with negative values preserved.
 - Set a positive CSV duration, start logging, and confirm logging stops automatically after the requested capture window.
+- Select `Save CSV to: USB on Red Pitaya`, start and stop manual CSV logging against `client/tools/fake_server.py`, and confirm the status reports a server row count.
+- On hardware, mount a USB stick at `/mnt/usb`, run the server with `--log-dir /mnt/usb/ads1278/logs`, select `Save CSV to: USB on Red Pitaya`, set a short duration, start logging, disconnect the GUI, and confirm the CSV keeps growing until the server deadline.
 
 ## Key files
 

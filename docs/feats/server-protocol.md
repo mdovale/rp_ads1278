@@ -8,8 +8,8 @@ Define the current network contract clearly enough that the implemented Python c
 
 ## Scope
 
-- In scope: the capability line, default TCP port, binary command encoding, binary message encoding, little-endian assumptions, and current emission rules.
-- Out of scope: the FPGA register map itself, GUI behavior, Linux service setup, and board-local high-rate capture files.
+- In scope: the capability line, default TCP port, binary command encoding, binary message encoding, little-endian assumptions, local USB CSV logging commands, and current emission rules.
+- Out of scope: the FPGA register map itself, GUI behavior, and Linux service setup.
 
 ## User-facing behavior
 
@@ -42,8 +42,21 @@ Current opcodes are:
 | `3` | `SET_EXTCLK_DIV` | `value` must be `>= 3` |
 | `4` | `MARK_CAPTURE` | `value` is ignored by the server |
 | `5` | `SET_MOD_DIV` | `value` must be `0` or `>= 2`; `0` holds MOD high |
+| `6` | `START_LOCAL_LOG` | `value` is an 8-bit channel mask; `0` means all channels |
+| `7` | `STOP_LOCAL_LOG` | `value` is ignored on request; `ACK.value` reports rows written |
+| `8` | `SET_LOCAL_LOG_DURATION` | Whole seconds for the next local log; `0` means manual/untimed |
+| `9` | `SET_LOCAL_LOG_FILENAME` | One 3-byte ASCII chunk of the next local log basename |
 
 Unknown opcodes are rejected.
+
+USB CSV logging commands are ordered by the client as:
+
+1. `MARK_CAPTURE` to establish a stream boundary.
+2. `SET_LOCAL_LOG_DURATION` with `0` for manual logging or a positive whole-second duration for unattended logging.
+3. One or more `SET_LOCAL_LOG_FILENAME` chunks. Bits `31:24` are the chunk index; bits `23:0` are up to three little-endian ASCII bytes. The server clears the pending basename when chunk `0` arrives and terminates the basename at the first NUL byte.
+4. `START_LOCAL_LOG` with the selected channel mask.
+
+`START_LOCAL_LOG` opens a CSV under the server log directory (`/mnt/usb/ads1278/logs` by default, or `--log-dir PATH`). If opening fails because the USB stick is not mounted, the filesystem is full, or the basename is invalid, the server sends `ERROR`. Timed local logs continue after the TCP client disconnects until the server deadline expires. Manual local logs are closed on client disconnect to avoid unbounded writes.
 
 Server-to-client legacy/control messages use a fixed 64-byte header:
 
@@ -88,9 +101,11 @@ Emission rules are:
 - Send one initial `SAMPLE` immediately after the capability line.
 - Send `ACK` immediately after every valid command.
 - Send `ERROR` immediately after every invalid command.
+- For local USB logging, send `ACK START_LOCAL_LOG` only after the CSV has been opened and its header flushed.
 - Send `SAMPLE` when `frame_cnt` changes.
 - In `--dma` mode, send one existing `SAMPLE` message per valid 128-byte DMA frame from a completed DDR ping-pong buffer, then ACK that buffer in MMIO.
 - In `--dma-bulk` mode, send one `BULK_SAMPLES` header plus compact records for valid frames in the completed DDR ping-pong buffer, then ACK that buffer in MMIO.
+- When USB CSV logging is active, the server writes the same logical samples to the CSV before socket emission. If a timed log remains active after client disconnect, the server keeps consuming legacy samples or DMA buffers with `client_fd == -1` until the deadline.
 - `ACK` and `ERROR` carry the same snapshot fields as `SAMPLE`, so a client can always treat the message as both a response and a state update.
 
 ## Architecture
@@ -99,7 +114,7 @@ The protocol implementation is intentionally simple:
 
 1. `protocol.h` defines the packed `ads1278_command` and `ads1278_message` structs and compile-time size guards.
 2. `cmd_parse.c` buffers short `recv()` chunks until a full 8-byte command is available, then validates opcode/value rules.
-3. `server.c` turns validated commands into MMIO writes, refreshes the latest coherent snapshot, and emits one 64-byte message per response.
+3. `server.c` turns validated commands into MMIO writes or local CSV actions, refreshes the latest coherent snapshot, and emits one 64-byte message per response.
 4. `memory_map.c` sign-extends MMIO channel words before they are copied into `ads1278_message`, so clients do not have to reinterpret the raw 24-bit payload.
 5. `server.c` copies DMA frame payloads into compact bulk records when `--dma-bulk` is enabled.
 
@@ -121,6 +136,7 @@ In legacy mode, protocol messages expose current state, not a guaranteed lossles
 - Send `SET_ENABLE 1` and confirm the next response is `ACK` with echoed opcode/value.
 - Send `SET_EXTCLK_DIV 2` and confirm the next response is `ERROR`.
 - Send `SET_MOD_DIV 6250000` and confirm the next response is `ACK` with `mod_div = 6250000`.
+- Send `MARK_CAPTURE`, `SET_LOCAL_LOG_DURATION 60`, filename chunks, then `START_LOCAL_LOG 0`; confirm a CSV appears under `/mnt/usb/ads1278/logs` and continues after client disconnect until the deadline.
 - Confirm negative channel inputs appear as negative signed 32-bit values in the binary message payload.
 
 ## Key files
@@ -130,6 +146,7 @@ In legacy mode, protocol messages expose current state, not a guaranteed lossles
 | Protocol constants and layout | `server/protocol.h` |
 | Command buffering and validation | `server/cmd_parse.c` |
 | Main protocol emission loop | `server/server.c` |
+| USB CSV writer | `server/csv_logger.c` |
 | Protocol layout test | `server/tests/test_protocol_layout.c` |
 | Command parser test | `server/tests/test_cmd_parse.c` |
 
