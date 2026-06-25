@@ -11,6 +11,7 @@ SUPPORTED_CAPABILITY_LINES = frozenset({CAPABILITY_LINE, "RP_CAP:ads1278_v2"})
 CAPABILITY_LINE_MAX = max(len(line) for line in SUPPORTED_CAPABILITY_LINES) + 1
 CHANNEL_COUNT = 8
 MIN_EXTCLK_DIV = 3
+MODULATION_OFF_DIV = 0
 MIN_MOD_DIV = 2
 MODULATION_CLOCK_HZ = 125_000_000.0
 DEFAULT_MODULATION_FREQUENCY_HZ = 10.0
@@ -111,11 +112,15 @@ def pack_set_extclk_div(divider: int) -> bytes:
 
 
 def modulation_divider_to_frequency_hz(divider: int) -> float:
+    if int(divider) == MODULATION_OFF_DIV:
+        return 0.0
     divider = max(int(divider), MIN_MOD_DIV)
     return MODULATION_CLOCK_HZ / (2.0 * divider)
 
 
 def modulation_frequency_to_divider(frequency_hz: float) -> int:
+    if frequency_hz == 0.0:
+        return MODULATION_OFF_DIV
     if frequency_hz < MIN_MODULATION_FREQUENCY_HZ:
         raise ValueError(
             f"modulation frequency must be >= {MIN_MODULATION_FREQUENCY_HZ:g} Hz"
@@ -132,9 +137,13 @@ def pack_set_modulation_frequency(frequency_hz: float) -> bytes:
     return pack_set_modulation_div(modulation_frequency_to_divider(frequency_hz))
 
 
+def pack_set_modulation_off() -> bytes:
+    return pack_set_modulation_div(MODULATION_OFF_DIV)
+
+
 def pack_set_modulation_div(divider: int) -> bytes:
-    if divider < MIN_MOD_DIV:
-        raise ValueError(f"modulation divider must be >= {MIN_MOD_DIV}")
+    if divider != MODULATION_OFF_DIV and divider < MIN_MOD_DIV:
+        raise ValueError(f"modulation divider must be 0 or >= {MIN_MOD_DIV}")
     return pack_command(CommandOpcode.SET_MOD_DIV, divider)
 
 

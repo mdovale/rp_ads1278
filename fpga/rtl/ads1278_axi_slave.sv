@@ -28,7 +28,7 @@
 //   0x50  DMA_ERROR_COUNT R Number of non-OKAY AXI write responses
 //   0x54  DMA_IRQ_STATUS R Sticky DMA interrupt/status bits
 //   0x58  DMA_IRQ_ACK W1C Clear DMA_IRQ_STATUS bits
-//   0x5C  MOD_DIV    R/W half-period in sys-clk cycles (default 10 Hz)
+//   0x5C  MOD_DIV    R/W  0 = off (hold MOD high); >=2 half-period in sys-clk cycles
 //   0x60  DMA_BUF_STATUS R  [0] buf0_full [1] buf1_full [2] active_buf
 //                          [3] overwrite_pending
 //   0x64  DMA_BUF_ACK W1C Clear buf0_full / buf1_full software ownership bits
@@ -246,7 +246,9 @@ ads1278_acq_top u_acq (
 
 // ---- Modulation square wave ----
 // MOD_DIV is a half-period divider in the same 125 MHz bus clock domain.
+// MOD_DIV = 0 disables toggling and holds the LVCMOS output high.
 logic [DW-1:0] mod_cnt;
+wire mod_disabled = (mod_div_reg == 32'd0);
 wire [DW-1:0] mod_div_eff = (mod_div_reg < 32'd2) ? 32'd2 : mod_div_reg;
 
 always_ff @(posedge bus.ACLK)
@@ -254,7 +256,10 @@ if (~bus.ARESETn) begin
   mod_cnt <= '0;
   mod_o   <= 1'b0;
 end else begin
-  if (mod_cnt >= mod_div_eff - 32'd1) begin
+  if (mod_disabled) begin
+    mod_cnt <= '0;
+    mod_o   <= 1'b1;
+  end else if (mod_cnt >= mod_div_eff - 32'd1) begin
     mod_cnt <= '0;
     mod_o   <= ~mod_o;
   end else begin

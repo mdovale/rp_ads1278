@@ -31,7 +31,7 @@ Current server-visible register map:
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
 | `0x24` | `CTRL` | R/W | Bit `0` = one-shot `SYNC` trigger, bit `1` = acquisition enable, bit `2` = demod enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared divider value used by current FPGA clocking logic |
-| `0x5C` | `MOD_DIV` | R/W | Modulation square-wave half-period divider |
+| `0x5C` | `MOD_DIV` | R/W | `0` holds MOD high; `>= 2` is the modulation square-wave half-period divider |
 
 Phase 1 freeze for DMA bring-up:
 
@@ -61,7 +61,7 @@ Current behavior a server can rely on:
 - The register block is word-oriented and uses 32-bit reads and writes.
 - `CTRL` resets to `0`, so acquisition starts disabled after reset.
 - `EXTCLK_DIV` resets to `625` (`0x271`).
-- `MOD_DIV` resets to `6,250,000`, which generates a nominal `10 Hz` square wave.
+- `MOD_DIV` resets to `6,250,000`, which generates a nominal `10 Hz` square wave. Writing `0` disables toggling and holds MOD high.
 - Channel registers update together after a complete 192-bit TDM frame is captured.
 - `frame_cnt` increments once per latched frame and resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
@@ -98,7 +98,7 @@ Ownership and data flow are:
    - eight 32-bit channel words
    - one packed `status` word
    - staged FIFO debug words
-5. `ads1278_axi_slave` exposes those values directly to software, forwards `status[0]` to `irq`, and generates the `MOD` square wave from `MOD_DIV`.
+5. `ads1278_axi_slave` exposes those values directly to software, forwards `status[0]` to `irq`, and generates the `MOD` output from `MOD_DIV`; `0` holds MOD high and `>= 2` generates the square wave.
 
 The packed status word is currently:
 

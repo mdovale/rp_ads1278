@@ -99,7 +99,7 @@ class FakeAds1278Server:
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))
                 continue
 
-            if opcode == CommandOpcode.SET_MOD_DIV and value >= 2:
+            if opcode == CommandOpcode.SET_MOD_DIV and (value == 0 or value >= 2):
                 self.mod_div = value
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))
                 continue

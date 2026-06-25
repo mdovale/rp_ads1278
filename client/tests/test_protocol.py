@@ -15,6 +15,7 @@ from ads1278_client.protocol import (
     pack_mark_capture,
     pack_set_enable,
     pack_set_extclk_div,
+    pack_set_modulation_div,
     pack_set_modulation_frequency,
     pack_trigger_sync,
     parse_message,
@@ -159,6 +160,10 @@ def test_command_packers_match_server_layout() -> None:
     assert mod_opcode == CommandOpcode.SET_MOD_DIV
     assert mod_value == 6_250_000
 
+    mod_off_opcode, mod_off_value = struct.unpack("<II", pack_set_modulation_div(0))
+    assert mod_off_opcode == CommandOpcode.SET_MOD_DIV
+    assert mod_off_value == 0
+
 
 def test_extclk_divider_below_server_minimum_rejected() -> None:
     with pytest.raises(ValueError, match=f">= {MIN_EXTCLK_DIV}"):
@@ -166,5 +171,12 @@ def test_extclk_divider_below_server_minimum_rejected() -> None:
 
 
 def test_modulation_frequency_conversion_uses_125_mhz_half_period() -> None:
+    assert modulation_frequency_to_divider(0.0) == 0
+    assert modulation_divider_to_frequency_hz(0) == 0.0
     assert modulation_frequency_to_divider(10.0) == 6_250_000
     assert modulation_divider_to_frequency_hz(6_250_000) == 10.0
+
+
+def test_modulation_divider_one_rejected() -> None:
+    with pytest.raises(ValueError, match="0 or >= 2"):
+        pack_set_modulation_div(1)

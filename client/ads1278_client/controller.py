@@ -13,10 +13,12 @@ from .csv_logger import SampleCsvLogger
 from .models import Ads1278Message, CommandOpcode, MessageType
 from .protocol import (
     CHANNEL_COUNT,
+    DEFAULT_MODULATION_FREQUENCY_HZ,
     SERVER_PORT,
     pack_mark_capture,
     pack_set_enable,
     pack_set_extclk_div,
+    pack_set_modulation_div,
     pack_set_modulation_frequency,
     pack_trigger_sync,
 )
@@ -140,6 +142,16 @@ class ClientController:
 
     def set_modulation_frequency(self, frequency_hz: float) -> None:
         self._transport.send_command(pack_set_modulation_frequency(frequency_hz))
+
+    def set_modulation(
+        self,
+        enabled: bool,
+        frequency_hz: float = DEFAULT_MODULATION_FREQUENCY_HZ,
+    ) -> None:
+        if enabled:
+            self.set_modulation_frequency(frequency_hz)
+            return
+        self._transport.send_command(pack_set_modulation_div(0))
 
     def start_logging(
         self,

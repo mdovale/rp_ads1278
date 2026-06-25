@@ -91,6 +91,9 @@ static void test_modulation_divider_validation(void)
     command.value = 6250000u;
     assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
 
+    command.value = 0u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+
     command.value = 1u;
     assert(ads1278_command_validate(&command) == ADS1278_CMD_ERR_INVALID_MOD_DIV);
 }

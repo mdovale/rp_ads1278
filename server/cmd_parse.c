@@ -67,7 +67,7 @@ ads1278_cmd_validation_result ads1278_command_validate(const ads1278_command *co
         }
         return ADS1278_CMD_ERR_INVALID_EXTCLK_DIV;
     case ADS1278_OPCODE_SET_MOD_DIV:
-        if (command->value >= 2u) {
+        if (command->value == 0u || command->value >= 2u) {
             return ADS1278_CMD_VALID;
         }
         return ADS1278_CMD_ERR_INVALID_MOD_DIV;
@@ -88,7 +88,7 @@ const char *ads1278_cmd_validation_result_string(ads1278_cmd_validation_result r
     case ADS1278_CMD_ERR_INVALID_EXTCLK_DIV:
         return "SET_EXTCLK_DIV requires value >= 3";
     case ADS1278_CMD_ERR_INVALID_MOD_DIV:
-        return "SET_MOD_DIV requires value >= 2";
+        return "SET_MOD_DIV requires value 0 or >= 2";
     default:
         return "invalid command";
     }

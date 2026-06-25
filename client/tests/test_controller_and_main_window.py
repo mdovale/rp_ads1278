@@ -24,7 +24,14 @@ from ads1278_client.main_window import (
     VIEW_MODE_ASD,
 )
 from ads1278_client.models import Ads1278Message, CommandOpcode, MessageType
-from ads1278_client.protocol import CHANNEL_COUNT, SERVER_PORT, pack_mark_capture
+from ads1278_client.protocol import (
+    CHANNEL_COUNT,
+    DEFAULT_MODULATION_FREQUENCY_HZ,
+    SERVER_PORT,
+    pack_mark_capture,
+    pack_set_modulation_div,
+    pack_set_modulation_frequency,
+)
 from ads1278_client.units import (
     frame_counts_to_relative_seconds,
     raw_codes_to_volts,
@@ -159,6 +166,37 @@ def test_controller_keeps_longer_asd_history_and_clears_on_disconnect() -> None:
     controller._handle_disconnected("disconnected")
 
     assert controller.get_snapshot().asd_channel_history[0].size == 0
+
+
+def test_controller_sets_modulation_off_or_frequency(monkeypatch) -> None:
+    sent_commands = []
+
+    class FakeTransportClient:
+        def __init__(self, on_message, on_connected, on_disconnected, on_error) -> None:
+            return None
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def send_command(self, payload: bytes) -> None:
+            sent_commands.append(payload)
+
+        def is_connected(self) -> bool:
+            return True
+
+    monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
+
+    controller = ClientController()
+    controller.set_modulation(False, 10.0)
+    controller.set_modulation(True, 10.0)
+
+    assert sent_commands == [
+        pack_set_modulation_div(0),
+        pack_set_modulation_frequency(10.0),
+    ]
 
 
 def test_controller_starts_csv_only_after_capture_marker_ack(
@@ -697,6 +735,291 @@ def test_refresh_does_not_overwrite_divider_while_editing(monkeypatch) -> None:
 
         assert window.divider_label.text() == "divider: 625"
         assert window.divider_input.value() == 1000
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_refresh_shows_modulation_off_from_zero_divider(monkeypatch) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    snapshot = ControllerSnapshot(
+        connected=True,
+        host="127.0.0.1",
+        port=SERVER_PORT,
+        capability_line="RP_CAP:ads1278_v3",
+        latest_message=_message(mod_div=0),
+        status_text="Connected",
+        status_level="ok",
+        logging_path="",
+        logging_remaining_s=None,
+        channel_history=_empty_history(),
+        asd_channel_history=_empty_asd_history(),
+        frame_history=_empty_frame_history(),
+    )
+
+    class FakeController:
+        def get_snapshot(self) -> ControllerSnapshot:
+            return snapshot
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def set_enabled(self, enabled: bool) -> None:
+            return None
+
+        def trigger_sync(self) -> None:
+            return None
+
+        def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation(self, enabled: bool, frequency_hz: float) -> None:
+            return None
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
+            return None
+
+        def start_logging(
+            self,
+            path: str,
+            duration_s: float | None = None,
+            channel_indices=None,
+        ) -> None:
+            return None
+
+        def stop_logging(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
+
+    window = MainWindow()
+    try:
+        window._refresh()
+
+        assert window.modulation_label.text() == "mod: off"
+        assert window.modulation_enable_checkbox.isChecked() is False
+        assert window.modulation_frequency_input.isEnabled() is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_refresh_preserves_unchecked_mod_while_settings_dirty(monkeypatch) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    snapshot = ControllerSnapshot(
+        connected=True,
+        host="127.0.0.1",
+        port=SERVER_PORT,
+        capability_line="RP_CAP:ads1278_v3",
+        latest_message=_message(mod_div=6_250_000),
+        status_text="Connected",
+        status_level="ok",
+        logging_path="",
+        logging_remaining_s=None,
+        channel_history=_empty_history(),
+        asd_channel_history=_empty_asd_history(),
+        frame_history=_empty_frame_history(),
+    )
+
+    class FakeController:
+        def get_snapshot(self) -> ControllerSnapshot:
+            return snapshot
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def set_enabled(self, enabled: bool) -> None:
+            return None
+
+        def trigger_sync(self) -> None:
+            return None
+
+        def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation(self, enabled: bool, frequency_hz: float) -> None:
+            return None
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
+            return None
+
+        def start_logging(
+            self,
+            path: str,
+            duration_s: float | None = None,
+            channel_indices=None,
+        ) -> None:
+            return None
+
+        def stop_logging(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
+
+    window = MainWindow()
+    try:
+        window.modulation_enable_checkbox.blockSignals(True)
+        window.modulation_enable_checkbox.setChecked(False)
+        window.modulation_enable_checkbox.blockSignals(False)
+        window._mod_enable_user_value = False
+        window._mod_settings_dirty = True
+
+        window._refresh()
+
+        assert window.modulation_enable_checkbox.isChecked() is False
+        assert window._mod_enable_user_value is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_send_modulation_uses_user_value_when_checkbox_resynced(monkeypatch) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    calls: list[tuple[bool, float]] = []
+
+    class FakeController:
+        def get_snapshot(self) -> ControllerSnapshot:
+            return ControllerSnapshot(
+                connected=True,
+                host="127.0.0.1",
+                port=SERVER_PORT,
+                capability_line="RP_CAP:ads1278_v3",
+                latest_message=_message(mod_div=6_250_000),
+                status_text="Connected",
+                status_level="ok",
+                logging_path="",
+                logging_remaining_s=None,
+                channel_history=_empty_history(),
+                asd_channel_history=_empty_asd_history(),
+                frame_history=_empty_frame_history(),
+            )
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def set_enabled(self, enabled: bool) -> None:
+            return None
+
+        def trigger_sync(self) -> None:
+            return None
+
+        def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation(self, enabled: bool, frequency_hz: float) -> None:
+            calls.append((enabled, frequency_hz))
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
+            return None
+
+        def start_logging(
+            self,
+            path: str,
+            duration_s: float | None = None,
+            channel_indices=None,
+        ) -> None:
+            return None
+
+        def stop_logging(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
+
+    window = MainWindow()
+    try:
+        window._mod_enable_user_value = False
+        window._mod_settings_dirty = True
+        window.modulation_enable_checkbox.setChecked(True)
+
+        window._send_modulation_command()
+
+        assert calls == [(False, DEFAULT_MODULATION_FREQUENCY_HZ)]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_modulation_checkbox_sends_command_when_connected(monkeypatch) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    calls: list[tuple[bool, float]] = []
+
+    class FakeController:
+        def get_snapshot(self) -> ControllerSnapshot:
+            return ControllerSnapshot(
+                connected=True,
+                host="127.0.0.1",
+                port=SERVER_PORT,
+                capability_line="RP_CAP:ads1278_v3",
+                latest_message=_message(mod_div=6_250_000),
+                status_text="Connected",
+                status_level="ok",
+                logging_path="",
+                logging_remaining_s=None,
+                channel_history=_empty_history(),
+                asd_channel_history=_empty_asd_history(),
+                frame_history=_empty_frame_history(),
+            )
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def set_enabled(self, enabled: bool) -> None:
+            return None
+
+        def trigger_sync(self) -> None:
+            return None
+
+        def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation(self, enabled: bool, frequency_hz: float) -> None:
+            calls.append((enabled, frequency_hz))
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
+            return None
+
+        def start_logging(
+            self,
+            path: str,
+            duration_s: float | None = None,
+            channel_indices=None,
+        ) -> None:
+            return None
+
+        def stop_logging(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
+
+    window = MainWindow()
+    try:
+        window.modulation_enable_checkbox.setChecked(False)
+
+        assert calls == [(False, DEFAULT_MODULATION_FREQUENCY_HZ)]
     finally:
         window.close()
         app.processEvents()

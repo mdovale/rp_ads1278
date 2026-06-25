@@ -297,7 +297,7 @@ ads1278_axi_slave #(
 //   exp_p_io[2] = DRDY      (input  ← ADS1278 /DRDY)
 //   exp_p_io[3] = SYNC      (output → ADS1278 /SYNC)
 //   exp_p_io[4] = EXTCLK    (output → ADS1278 CLK)
-//   exp_p_io[5] = MOD       (output → 10 Hz default modulation square wave)
+//   exp_p_io[5] = MOD       (output → 10 Hz default square wave, high when off)
 //   exp_p_io[6:7], exp_n_io[0:7] = unused (high-Z)
 ////////////////////////////////////////////////////////////////////////////////
 

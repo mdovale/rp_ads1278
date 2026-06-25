@@ -73,4 +73,4 @@ Some examples:
 
 The `EXTCLK` input on the ADS1278EVM is an SMA connector. It is awkward to connect an RP GPIO pin to an SMA connector, but we will try it.
 
-The `MOD` output is a 3.3 V LVCMOS square wave generated in FPGA logic. It defaults to `10 Hz` and is controlled by the client through the server protocol by writing the `MOD_DIV` register.
+The `MOD` output is a 3.3 V LVCMOS signal generated in FPGA logic. It defaults to a `10 Hz` square wave; writing `MOD_DIV = 0` holds the output high, and writing `MOD_DIV >= 2` selects the square-wave frequency through the client/server protocol.

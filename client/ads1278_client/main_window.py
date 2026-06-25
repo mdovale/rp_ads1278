@@ -38,6 +38,7 @@ from .protocol import (
     MIN_MODULATION_FREQUENCY_HZ,
     SERVER_PORT,
     modulation_divider_to_frequency_hz,
+    modulation_frequency_to_divider,
 )
 from .units import sample_rate_hz
 
@@ -82,6 +83,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._asd_results: dict[int, AsdTraceResult] = {}
         self._asd_revision = 0
         self._last_asd_request_monotonic = 0.0
+        self._mod_enable_user_value = True
+        self._mod_settings_dirty = False
 
         self.setWindowTitle("rp_ads1278 Client")
         self.resize(1400, 900)
@@ -194,6 +197,10 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.set_divider_button)
 
         layout.addSpacing(16)
+        self.modulation_enable_checkbox = QtWidgets.QCheckBox("MOD enable")
+        self.modulation_enable_checkbox.setChecked(True)
+        layout.addWidget(self.modulation_enable_checkbox)
+
         layout.addWidget(QtWidgets.QLabel("MOD freq"))
         self.modulation_frequency_input = QtWidgets.QDoubleSpinBox()
         self.modulation_frequency_input.setRange(
@@ -204,15 +211,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.modulation_frequency_input.setSingleStep(1.0)
         self.modulation_frequency_input.setSuffix(" Hz")
         self.modulation_frequency_input.setValue(DEFAULT_MODULATION_FREQUENCY_HZ)
+        self.modulation_enable_checkbox.toggled.connect(self._on_mod_enable_toggled)
+        self.modulation_frequency_input.valueChanged.connect(
+            self._on_mod_frequency_changed
+        )
+        self.modulation_frequency_input.setEnabled(
+            self.modulation_enable_checkbox.isChecked()
+        )
         layout.addWidget(self.modulation_frequency_input)
 
         self.set_modulation_button = QtWidgets.QPushButton("Set MOD")
-        self.set_modulation_button.clicked.connect(
-            lambda: self._send_command(
-                self._controller.set_modulation_frequency,
-                self.modulation_frequency_input.value(),
-            )
-        )
+        self.set_modulation_button.clicked.connect(self._send_modulation_command)
         layout.addWidget(self.set_modulation_button)
 
         layout.addSpacing(16)
@@ -512,6 +521,45 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._settings.setValue("last_host", host)
         self._settings.setValue("last_port", port)
+        self._mod_settings_dirty = False
+
+    def _on_mod_enable_toggled(self, enabled: bool) -> None:
+        self._mod_enable_user_value = enabled
+        self.modulation_frequency_input.setEnabled(enabled)
+        self._mod_settings_dirty = True
+        if self._controller.get_snapshot().connected:
+            self._send_modulation_command()
+
+    def _on_mod_frequency_changed(self, _value: float) -> None:
+        self._mod_settings_dirty = True
+
+    def _send_modulation_command(self) -> None:
+        self._send_command(
+            self._controller.set_modulation,
+            self._mod_enable_user_value,
+            self.modulation_frequency_input.value(),
+        )
+
+    def _server_mod_matches_controls(self, mod_div: int) -> bool:
+        enabled = mod_div != 0
+        if enabled != self._mod_enable_user_value:
+            return False
+        if not enabled:
+            return True
+        return mod_div == modulation_frequency_to_divider(
+            self.modulation_frequency_input.value()
+        )
+
+    def _sync_mod_enable_checkbox_from_server(self, enabled: bool) -> None:
+        self._mod_enable_user_value = enabled
+        checkbox = self.modulation_enable_checkbox
+        if checkbox.isChecked() == enabled:
+            self.modulation_frequency_input.setEnabled(enabled)
+            return
+        checkbox.blockSignals(True)
+        checkbox.setChecked(enabled)
+        checkbox.blockSignals(False)
+        self.modulation_frequency_input.setEnabled(enabled)
 
     def _send_command(self, fn, *args) -> None:
         try:
@@ -584,16 +632,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self.modulation_label.setText("mod: -")
         else:
             modulation_frequency_hz = modulation_divider_to_frequency_hz(latest.mod_div)
+            modulation_enabled = latest.mod_div != 0
             self.frame_count_label.setText(f"frame_cnt: {latest.frame_cnt}")
             self.msg_seq_label.setText(f"msg_seq: {latest.msg_seq}")
             self.enabled_label.setText(f"enabled: {'yes' if latest.enabled else 'no'}")
             self.overflow_label.setText(f"overflow: {'yes' if latest.overflow else 'no'}")
             self.divider_label.setText(f"divider: {latest.extclk_div}")
-            self.modulation_label.setText(f"mod: {modulation_frequency_hz:.3f} Hz")
+            if modulation_enabled:
+                self.modulation_label.setText(f"mod: {modulation_frequency_hz:.3f} Hz")
+            else:
+                self.modulation_label.setText("mod: off")
             if snapshot.connected and not self.divider_input.hasFocus():
                 self.divider_input.setValue(latest.extclk_div)
-            if snapshot.connected and not self.modulation_frequency_input.hasFocus():
-                self.modulation_frequency_input.setValue(modulation_frequency_hz)
+            if self._server_mod_matches_controls(latest.mod_div):
+                self._mod_settings_dirty = False
+            if snapshot.connected and not self._mod_settings_dirty:
+                self._sync_mod_enable_checkbox_from_server(modulation_enabled)
+                if (
+                    modulation_enabled
+                    and not self.modulation_frequency_input.hasFocus()
+                ):
+                    self.modulation_frequency_input.setValue(modulation_frequency_hz)
 
         self.capability_label.setText(
             f"capability: {snapshot.capability_line or '-'}"

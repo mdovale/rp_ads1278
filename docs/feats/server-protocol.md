@@ -41,7 +41,7 @@ Current opcodes are:
 | `2` | `TRIGGER_SYNC` | `value` is ignored by the server |
 | `3` | `SET_EXTCLK_DIV` | `value` must be `>= 3` |
 | `4` | `MARK_CAPTURE` | `value` is ignored by the server |
-| `5` | `SET_MOD_DIV` | `value` must be `>= 2` |
+| `5` | `SET_MOD_DIV` | `value` must be `0` or `>= 2`; `0` holds MOD high |
 
 Unknown opcodes are rejected.
 
@@ -56,7 +56,7 @@ Server-to-client legacy/control messages use a fixed 64-byte header:
 | `4` | `status_raw` | Raw FPGA `STATUS` word from the latest coherent snapshot |
 | `5` | `ctrl_raw` | Raw FPGA `CTRL` word from the latest coherent snapshot |
 | `6` | `extclk_div` | Raw FPGA divider word from the latest coherent snapshot |
-| `7` | `mod_div` | Raw FPGA modulation half-period divider from the latest coherent snapshot |
+| `7` | `mod_div` | Raw FPGA modulation divider from the latest coherent snapshot; `0` means MOD off/high |
 | `8` | `ch1` | Signed 32-bit channel sample |
 | `9` | `ch2` | Signed 32-bit channel sample |
 | `10` | `ch3` | Signed 32-bit channel sample |

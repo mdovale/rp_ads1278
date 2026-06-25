@@ -42,7 +42,7 @@ The current register map is:
 | `0x50` | `DMA_ERROR_COUNT` | R | Number of non-OKAY AXI write responses |
 | `0x54` | `DMA_IRQ_STATUS` | R | Sticky DMA interrupt/status bits |
 | `0x58` | `DMA_IRQ_ACK` | W1C | Clear `DMA_IRQ_STATUS` bits |
-| `0x5C` | `MOD_DIV` | R/W | Modulation square-wave half-period divider, `125 MHz / (2 * MOD_DIV)` |
+| `0x5C` | `MOD_DIV` | R/W | `0` holds MOD high; `>= 2` is the modulation square-wave half-period divider, `125 MHz / (2 * MOD_DIV)` |
 | `0x60` | `DMA_BUF_STATUS` | R | Ping-pong ownership: bit `0` = buffer 0 full, bit `1` = buffer 1 full, bit `2` = active hardware buffer, bit `3` = overwrite pending |
 | `0x64` | `DMA_BUF_ACK` | W1C | Software-consumed buffer acknowledgement: bit `0` clears buffer 0 full, bit `1` clears buffer 1 full |
 | `0x68` | `DMA_OVERWRITE_COUNT` | R | Count of times DMA advanced into a buffer still marked full |
@@ -61,7 +61,7 @@ Current read and write semantics:
 - `DMA_BUF_STATUS` exposes the first-pass ping-pong ownership state. A buffer full bit means hardware has completed that DDR buffer and software owns it until it writes the matching bit to `DMA_BUF_ACK`.
 - `DMA_BUF_SIZE` is interpreted as one ping-pong buffer size; buffer 0 starts at `DMA_BASE_ADDR`, and buffer 1 starts at `DMA_BASE_ADDR + DMA_BUF_SIZE`.
 - If DMA wraps into a buffer whose full bit is still set, hardware increments `DMA_OVERWRITE_COUNT` and sets the overwrite-pending bit instead of silently hiding the ownership violation.
-- `MOD_DIV` resets to `6,250,000`, which corresponds to a nominal `10 Hz` modulation square wave from a `125 MHz` input clock.
+- `MOD_DIV` resets to `6,250,000`, which corresponds to a nominal `10 Hz` modulation square wave from a `125 MHz` input clock. Writing `0` disables toggling and holds the MOD output high.
 
 Important current caveats:
 
@@ -94,13 +94,13 @@ Control and data flow are:
    - a packed `status` word
    - staged FIFO debug words
 6. `ads1278_axi_slave` exposes those values through the read mux and forwards `status[0]` as `irq`.
-7. `ads1278_axi_slave` also generates the modulation square wave directly from `mod_div_reg` and exposes it to `red_pitaya_top.sv` for `exp_p_io[5]`.
+7. `ads1278_axi_slave` also generates the modulation output directly from `mod_div_reg` and exposes it to `red_pitaya_top.sv` for `exp_p_io[5]`; `0` holds the output high and `>= 2` generates a square wave.
 
 Reset and lifecycle notes:
 
 - `CTRL` resets to `0`, so acquisition starts disabled.
 - `EXTCLK_DIV` resets to `625`.
-- `MOD_DIV` resets to `6,250,000`, so the modulation output starts at `10 Hz`.
+- `MOD_DIV` resets to `6,250,000`, so the modulation output starts at `10 Hz`. Writing `0` holds the output high.
 - `frame_cnt` resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
 - The channel registers update only when a full 192-bit frame is captured and latched.

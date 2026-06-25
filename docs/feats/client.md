@@ -29,13 +29,13 @@ Current runtime behavior is:
 - The GUI defaults to `127.0.0.1:5000` and lets the user change host and port before connecting.
 - The client accepts `RP_CAP:ads1278_v3` and still accepts `RP_CAP:ads1278_v2` for older servers before it accepts binary traffic.
 - After the handshake, the client decodes the little-endian server messages defined in [Server Protocol](server-protocol.md), including `BULK_SAMPLES` batches.
-- The top bar shows connection state, `frame_cnt`, `msg_seq`, enable state, overflow state, the currently reported EXTCLK divider, and modulation frequency.
+- The top bar shows connection state, `frame_cnt`, `msg_seq`, enable state, overflow state, the currently reported EXTCLK divider, and modulation state/frequency.
 - The main view plots `CH1` through `CH8` as eight live traces.
 - The **View** selector switches between time-domain plotting and an optional
   SpecKit-backed ASD view. ASD plots `V/sqrt(Hz)` versus Hz from a longer client
   history buffer and recomputes in a background worker so the GUI remains
   responsive.
-- `Enable`, `Disable`, `SYNC`, `Set divider`, and `Set MOD` send the documented binary commands to the server.
+- `Enable`, `Disable`, `SYNC`, `Set divider`, and `Set MOD` send the documented binary commands to the server. The **MOD enable** checkbox immediately sends `MOD_DIV = 0` when unchecked, which holds the MOD output high.
 - `ACK` and `ERROR` update the displayed state immediately and also surface a visible status line that includes the echoed opcode and value.
 - CSV logging writes rows only for in-memory `SAMPLE` messages and includes host timestamp plus server metadata and all eight channels. Bulk batches are expanded to `SAMPLE` objects before logging.
 - CSV logging can run manually until `Stop CSV` or for a positive duration entered as hours, minutes, and seconds. Timed capture starts its countdown after the `MARK_CAPTURE` ACK opens the CSV logger.
@@ -87,6 +87,7 @@ The connection lifecycle is:
 - Set divider `625` and confirm the displayed divider updates.
 - Set divider `2` and confirm an `ERROR` is shown.
 - Set MOD frequency `10 Hz` and confirm the displayed modulation frequency updates to `10.000 Hz`.
+- Clear **MOD enable** and confirm the status line shows `ACK SET_MOD_DIV value=0` and `mod: off`.
 - Start manual CSV logging, re-enable streaming, and confirm the file contains only `SAMPLE` rows with negative values preserved.
 - Set a positive CSV duration, start logging, and confirm logging stops automatically after the requested capture window.
 
