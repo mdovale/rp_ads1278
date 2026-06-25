@@ -40,7 +40,7 @@ module ads1278_acq_top (
     input  wire [31:0] extclk_div
 );
 
-localparam integer DMA_FIFO_DEPTH = 64;
+localparam integer DMA_FIFO_DEPTH = 512;
 localparam integer DMA_FIFO_LEVEL_W = $clog2(DMA_FIFO_DEPTH + 1);
 
 // Internal 24-bit channel data from SPI TDM

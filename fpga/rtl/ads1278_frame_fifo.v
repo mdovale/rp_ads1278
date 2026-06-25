@@ -29,8 +29,9 @@ localparam [LEVEL_W-1:0] DEPTH_COUNT = DEPTH;
 reg [ADDR_W-1:0] wr_ptr;
 reg [ADDR_W-1:0] rd_ptr;
 
-wire do_push = push && !full;
-wire do_pop  = pop && !empty;
+wire fifo_active = rstn && !clear;
+wire do_push = fifo_active && push && !full;
+wire do_pop  = fifo_active && pop && !empty;
 
 wire [ADDR_W-1:0] wr_ptr_next =
     (wr_ptr == DEPTH - 1) ? {ADDR_W{1'b0}} : (wr_ptr + {{(ADDR_W-1){1'b0}}, 1'b1});
@@ -40,34 +41,40 @@ wire [ADDR_W-1:0] rd_ptr_next =
 assign empty = (level == {LEVEL_W{1'b0}});
 assign full  = (level == DEPTH_COUNT);
 
+always @(posedge clk) begin
+    if (do_push) begin
+        mem[wr_ptr] <= din;
+    end
+end
+
+always @(posedge clk) begin
+    if (do_pop) begin
+        dout <= mem[rd_ptr];
+    end
+end
+
 always @(posedge clk or negedge rstn) begin
     if (!rstn) begin
         wr_ptr <= {ADDR_W{1'b0}};
         rd_ptr <= {ADDR_W{1'b0}};
-        dout   <= {DATA_W{1'b0}};
         level  <= {LEVEL_W{1'b0}};
     end else if (clear) begin
         wr_ptr <= {ADDR_W{1'b0}};
         rd_ptr <= {ADDR_W{1'b0}};
-        dout   <= {DATA_W{1'b0}};
         level  <= {LEVEL_W{1'b0}};
     end else begin
         case ({do_push, do_pop})
             2'b10: begin
-                mem[wr_ptr] <= din;
-                wr_ptr      <= wr_ptr_next;
-                level       <= level + {{(LEVEL_W-1){1'b0}}, 1'b1};
+                wr_ptr <= wr_ptr_next;
+                level  <= level + {{(LEVEL_W-1){1'b0}}, 1'b1};
             end
             2'b01: begin
-                dout  <= mem[rd_ptr];
                 rd_ptr <= rd_ptr_next;
                 level <= level - {{(LEVEL_W-1){1'b0}}, 1'b1};
             end
             2'b11: begin
-                mem[wr_ptr] <= din;
-                dout        <= mem[rd_ptr];
-                wr_ptr      <= wr_ptr_next;
-                rd_ptr      <= rd_ptr_next;
+                wr_ptr <= wr_ptr_next;
+                rd_ptr <= rd_ptr_next;
             end
             default: begin
             end

@@ -1,7 +1,7 @@
 # rp_ads1278 — Capture, logging UX, and DMA quality open issues
 
 **Date:** 2026-06-25  
-**Status:** **Open** — operator-reported; not yet triaged on hardware in this session  
+**Status:** **Open** — Issue 1 triaged offline; Issue 5 **Step 1 done on-target** (div 5: `FIFO_DROPS` ↑, `DMA_OVERWRITE` flat); active: PL FIFO fix + CH1 parse hardening  
 **Prior context:** `20260612_usb-csv-logging.md`, `20260524_dma-frame-burst-alignment.md`, `20260527b_axi-read-snapshot-and-dma-rate-limits.md`
 
 ---
@@ -63,6 +63,22 @@ fs = 125 MHz / (2 × EXTCLK_DIV × 512)
 | 625 | ~195 Hz |
 | 125 | ~977 Hz |
 | 5 | **~24.4 ksps** |
+
+### Findings (2026-06-25 offline CSV — `data-loss-test/Legacy/`)
+
+Short legacy captures at dividers 5 / 10 / 15 / 20 confirm **ADC sampling is correct**; loss is **server transport only**:
+
+| File (nominal fs) | EXTCLK_DIV | ADC fs (frame span) | Receive rate | Loss (frame gaps) |
+|-------------------|------------|---------------------|--------------|-------------------|
+| 6104 Hz | 20 | 100% of nominal | 90% | 10% |
+| 8138 Hz | 15 | 100% | 76% | 24% |
+| 12217 Hz | 10 | 100% | 58% | 42% |
+| 24414 Hz | 5 | 100% | 34% | 66% |
+
+- `msg_seq` always increments by 1 → TCP/client delivery is gap-free; skips are in legacy poll/send path.
+- Loss is **steady skip-N** (e.g. mean gap ≈ 3 at div 5), not bursty dropouts.
+- Effective legacy transport ceiling ≈ **7–8 ksps** in these runs; div **20** (~6.1 ksps) is the only sweep point with ≤10% loss.
+- `overflow` bit set on every row (sticky); not useful alone for separating transport vs FPGA loss in these logs.
 
 ### Acceptance criteria
 
@@ -226,26 +242,73 @@ Recommend **Option A** to preserve message layout; document in `docs/feats/serve
 
 Prior handoffs document **GP0 / AXI hangs at aggressive dividers** (e.g. div 5) and **`DMA_OVERWRITE_COUNT`** when consumer is slow — see `20260527b`, `20260528_axi-mmio-hang-handoff.md`.
 
-Spikes in DMA but not legacy may be:
+### Findings (2026-06-25 offline CSV — `data-loss-test/dma-bulk/` vs `Legacy/`)
 
-1. **Real samples** — overflow, `FIFO_DROPS`, buffer overwrite (check MMIO counters during capture)
-2. **Parse / alignment** — wrong stride → `pad=BAD` / erratic `gap` (Phase 8 fixed 128-byte stride; re-verify bitstream)
-3. **Batch artifacts** — partial buffer, canary phase, first-frame skip in server consumer
-4. **Coherency** — stale DDR without cache invalidate (`server/server.c` DMA path)
-5. **Not spikes in ADC** — legacy shows **latest** sample only (low-pass by omission); DMA shows **every frame in buffer** including real glitches
+A/B captures at dividers 5 / 10 / 15 / 20 (~few seconds each) show **two separate problems**: transport/rate (Issue 1 overlap) and **CH1 spike artifacts unique to DMA**.
+
+**Rate / frame delivery (`--dma-bulk`):**
+
+| File (nominal fs) | EXTCLK_DIV | ADC fs (frame span) | Receive rate | Notes |
+|-------------------|------------|---------------------|--------------|-------|
+| 6104 Hz | 20 | 101% | 101% | Matches legacy; no transport cap |
+| 8138 Hz | 15 | 100% | 99.8% | Matches legacy |
+| 12207 Hz | 10 | 82% | 82% | FPGA/DMA stream loss (~18%), not poll lag |
+| 24414 Hz | 5 | 70% | 41% | ~30% DMA-side loss + ~10 ksps host delivery cap |
+
+- Receive-order `frame_cnt` is often **non-monotonic** (~12% backward/dup deltas, `(+6, −4)` splice signature at ping-pong boundaries). **Do not** compute DMA loss from raw consecutive CSV rows; sort/unwrap first.
+- `overflow` bit **clear** on all DMA rows (legacy had sticky overflow set).
+
+**CH1 spikes (6104 Hz example — same pattern at all dividers):**
+
+| Metric | Legacy | DMA-bulk |
+|--------|--------|----------|
+| CH1 range | −36 … +1667 | −7 M … +7 M |
+| CH1 mean / stdev | 818 / 722 | 818 / 722 when \|CH1\| < 5000; stdev explodes when outliers included |
+| Max step | 201 | 9.3 M |
+| Rows with \|CH1\| > 2000 | 0% | **~0.3%** |
+| CH8 on spike rows | n/a | **normal** (~5360) |
+
+- Good DMA CH1 rows match legacy statistics (same modulated signal). Spikes are **not** reproduced on CH8 → **not real analog glitches**.
+- Recurring garbage CH1 codes (e.g. `4202513`, `-115235`, `4202595`) across files → **misread DDR / wrong word in 128-byte record**, not ADC physics.
+- Spikes correlate with **buffer-boundary reorder** (backward `frame_cnt`, duplicate `frame_cnt` with different CH1). On spike rows, `status_raw` upper 16 bits still match `frame_cnt`; **metadata word looks fine, CH1 payload word is wrong**.
+- Legacy looks smooth because it **decimates** (~55–90% frames dropped) and uses **coherent MMIO snapshot** (double-read `frame_cnt` match in `memory_map.c`) — it never exposes corrupt DDR frames.
+
+### Hypothesis (updated after offline A/B)
+
+**Primary (CH1 spikes):** **DDR frame parse / ping-pong splice corruption** — a small fraction (~0.3% of rows; ~0.7% of steps) of emitted bulk frames have valid canary/padding (`ads1278_dma_frame_words_valid`) but **wrong CH1 word**, likely from:
+
+- Wrong **canary phase / frame start** at a ping-pong buffer edge (see `20260524_dma-frame-burst-alignment.md`; on-target `frame_start_phase` was 30, not 0).
+- **Out-of-order buffer merge** when the server emits a full DDR buffer as one bulk batch — `(+6, −4)` `frame_cnt` pattern and duplicate `frame_cnt` with mismatched CH1.
+- **No channel sanity gate** after parse — server trusts padding + canary only (`server/server.c` `ads1278_dma_frame_words_valid`).
+
+**Secondary (rate / gaps at div 5–10):** **PL FIFO drops** — **confirmed on-target at div 5** (`FIFO_DROPS` 0 → 0x29918; `DMA_OVERWRITE_COUNT` stayed 0). Server consumer lag / overwrite **ruled out** for this board at `--dma-bulk --poll-ms 0`. Fix in FPGA (`ads1278_acq_top.v` FIFO depth + HP0 writer throughput); see [DMA fix plan Step 3](20260625_dma-fix-plan.md#step-3--fix-frame-loss-pl-fifo--ddr-writer-throughput-active).
+
+**Ruled out (for CH1 spikes in these logs):**
+
+- ~~Legacy hides real ADC glitches~~ — CH8 would spike too; good DMA CH1 matches legacy exactly.
+- ~~Sticky FPGA `overflow`~~ — DMA rows have overflow clear; legacy had it set throughout.
+- ~~TCP loss~~ — `msg_seq` always +1 in both modes.
+
+**Still open:**
+
+- Stale DDR / missing cache invalidate before parse (CH1 spikes).
+- Whether client CSV from the Step 1 div-5 run still shows ~0.3% CH1 spikes (`dma-frames` had `pad=ok` but live snapshot is not a spike hunt).
+- **FPGA:** sustain div 5 without `FIFO_DROPS` (Step 3 in fix plan).
 
 ### Investigation plan
 
-1. **Same divider, A/B:** Legacy CSV vs `--dma-bulk` CSV at div 625 → 125 → 62 → 31 → **5**; plot CH1 diff and `frame_cnt` gaps.
-2. **On-target counters** during DMA soak at each divider: `FIFO_DROPS (0x30)`, `DMA_OVERWRITE_COUNT (0x68)`, `overflow`, `DMA_BUF_STATUS (0x60)`.
-3. **`devmem dma-frames`** after short capture: require `pad=ok`, `gap=1` when `FIFO_DROPS Δ = 0`.
-4. **Server flags:** `--dma-bulk --poll-ms 0` for sustained USB/host logging (per USB handoff).
-5. **Bitstream:** Confirm deployed bitstream matches read-snapshot fix if hangs persist at div 5.
+1. ~~**Same divider, A/B**~~ — done offline (`data-loss-test/`).
+2. ~~**On-target counters at div 5**~~ — done (`FIFO_DROPS` ↑, `DMA_OVERWRITE` flat; see [DMA fix plan Step 1](20260625_dma-fix-plan.md#step-1--reproduce-on-the-board--done)).
+3. **`devmem dma-frames`** on a capture that shows client-side CH1 spikes: check `pad=ok`, `gap=1`, and whether corrupt CH1 rows correspond to `pad=BAD` or phase slip.
+4. **Server hardening:** per-buffer canary phase (not only first canary in mapping); optional CH1 range / step sanity filter before emit; log `dma_bad_frames` / reject count.
+5. **Server flags:** `--dma-bulk --poll-ms 0` for sustained USB/host logging (per USB handoff).
+6. **Bitstream:** Confirm deployed bitstream matches read-snapshot fix if hangs persist at div 5.
 
 ### Acceptance criteria
 
-- [ ] Root cause identified (or ruled out: e.g. “legacy hides intermittent FIFO drops”)
-- [ ] DMA capture at **≥ 24 ksps** without spikes above agreed threshold (define vs legacy or vs known-good reference)
+- [x] Root cause confirmed on-target for high-rate gaps: **PL `FIFO_DROPS` at div 5** (overwrite ruled out)
+- [ ] CH1 spike root cause confirmed on-target (expect: parse/buffer-boundary corruption)
+- [ ] DMA capture at **≥ 24 ksps** without CH1 outliers above legacy max step (~200 codes at div 20 reference)
 - [ ] Document recommended server invocation for 24 ksps long captures
 - [ ] Update `docs/feats/server.md` / DMA handoffs with findings
 
@@ -260,8 +323,8 @@ Spikes in DMA but not legacy may be:
 
 ## Suggested work order
 
-1. **Issue 1** — Frame-gap tooling (unblocks honest comparison for Issue 5)
-2. **Issue 5** — DMA vs legacy A/B at stepped dividers up to div 5
+1. **Issue 5** — FPGA FIFO / HP0 writer fix for div 5 (Step 3); server parse hardening for CH1 spikes (Step 2)
+2. **Issue 1** — Frame-gap tooling + GUI live stats (offline analysis done; script/GUI still open)
 3. **Issue 4** — Protocol + reconnect UX (high operator value for long USB runs)
 4. **Issues 2 & 3** — GUI polish (independent, client-only)
 
@@ -269,6 +332,7 @@ Spikes in DMA but not legacy may be:
 
 ## Related docs
 
+- [DMA fix plan (short)](20260625_dma-fix-plan.md) — step-by-step how to fix frame loss and spikes
 - [Client features](../feats/client.md)
 - [Server features](../feats/server.md)
 - [Server protocol](../feats/server-protocol.md)
@@ -280,8 +344,10 @@ Spikes in DMA but not legacy may be:
 
 ## Hardware QA checklist (when addressing above)
 
-- [ ] Legacy: CSV gap analysis at dividers 625, 125, 62, 31, 5
-- [ ] DMA: same dividers with `--dma-bulk --poll-ms 0`; log MMIO counters
+- [x] Legacy: CSV gap analysis at dividers 20, 15, 10, 5 (`data-loss-test/Legacy/`)
+- [x] DMA-bulk: A/B CSV at dividers 20, 15, 10, 5 (`data-loss-test/dma-bulk/`) — offline only
+- [x] DMA: div 5 with `--dma-bulk --poll-ms 0`; MMIO counters logged (`FIFO_DROPS` ↑, `OVERWRITE` flat)
+- [ ] `devmem dma-frames` during a capture that reproduces CH1 spikes in client CSV
 - [ ] USB 10 h timed: disconnect GUI + SSH, reconnect, verify countdown (after Issue 4)
 - [ ] Host timed CSV: countdown visible for full duration (after Issue 3)
 - [ ] Save As on Start CSV for local logging (after Issue 2)
