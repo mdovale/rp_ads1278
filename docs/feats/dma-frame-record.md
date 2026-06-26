@@ -75,7 +75,8 @@ Earlier bring-up used a **64-byte** stride (two records per burst). On-target te
 ## Software parsing rules
 
 - Treat the DMA buffer as a dense array of `ads1278_dma_frame` with **128-byte** stride.
-- With `pad=ok`, `frame_count` should increase by **1** between consecutive valid records (16-bit counter may wrap).
+- A frame is releasable to TCP or CSV only when padding/canary validate, `frame_count` is the zero-extended copy of `status_raw[31:16]`, `new_data` is set, `overflow` is clear, and the server can release it as part of a monotonic 16-bit frame-count sequence.
+- With `pad=ok`, `frame_count` should increase by **1** between consecutive released records (16-bit counter may wrap). Forward gaps are logged before release; stale, duplicate, or reordered records are rejected.
 - `pad=LEGACY` means rebuild/deploy the current bitstream and `rpdevmem`.
 - Skip all-zero `frame[0]` if the writer had not yet completed the first burst.
 

@@ -30,9 +30,18 @@ typedef struct {
     uint32_t accepted_commands;
     uint32_t rejected_commands;
     uint32_t dma_buffers_consumed;
+    uint32_t dma_frames_parsed;
+    uint32_t dma_frames_released;
     uint32_t dma_frames_streamed;
     uint32_t dma_bulk_messages_streamed;
     uint32_t dma_bad_frames;
+    uint32_t dma_bad_canary;
+    uint32_t dma_bad_metadata;
+    uint32_t dma_frame_gaps;
+    uint32_t dma_reordered_frames;
+    uint32_t dma_duplicate_frames;
+    uint32_t dma_coherence_rejects;
+    uint32_t dma_queue_full;
 } ads1278_server_stats;
 
 void ads1278_server_options_init(ads1278_server_options *options);

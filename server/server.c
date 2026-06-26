@@ -23,6 +23,13 @@
 #define MSG_NOSIGNAL 0
 #endif
 
+#define ADS1278_DMA_REORDER_CAPACITY 2048u
+#define ADS1278_DMA_CH1_COHERENCE_LIMIT 5000
+#define ADS1278_DMA_FRAME_COUNTER_MODULUS 65536u
+#define ADS1278_DMA_FRAME_COUNTER_HALF_RANGE 32768u
+#define ADS1278_DMA_REJECT_LOG_FIRST_N 3u
+#define ADS1278_DMA_RELEASE_RESULT_COUNT 8u
+
 typedef struct {
     int fd;
     size_t map_size;
@@ -35,6 +42,15 @@ typedef struct {
 } ads1278_dma_state;
 
 typedef struct {
+    size_t phase;
+    size_t available_records;
+    size_t layout_valid_records;
+    size_t metadata_valid_records;
+    size_t bad_layout_records;
+    size_t bad_metadata_records;
+} ads1278_dma_phase_score;
+
+typedef struct {
     ads1278_mmio mmio;
     ads1278_dma_state dma;
     ads1278_snapshot snapshot;
@@ -45,7 +61,18 @@ typedef struct {
     uint32_t pending_local_log_duration_s;
     char pending_local_log_filename[ADS1278_LOCAL_LOG_FILENAME_MAX + 1u];
     uint16_t last_streamed_frame_cnt;
+    uint32_t next_dma_release_seq;
+    ads1278_bulk_frame dma_pending_frames[ADS1278_DMA_REORDER_CAPACITY];
+    bool dma_pending_valid[ADS1278_DMA_REORDER_CAPACITY];
+    size_t dma_pending_count;
+    uint32_t dma_reject_log_counts[ADS1278_DMA_RELEASE_RESULT_COUNT];
+    uint32_t dma_reject_log_printed[ADS1278_DMA_RELEASE_RESULT_COUNT];
+    int32_t last_dma_release_ch1;
+    unsigned int active_dma_buffer_index;
     bool have_snapshot;
+    bool have_dma_release_seq;
+    bool have_last_dma_release_ch1;
+    bool dma_reject_log_active;
     bool local_log_deadline_valid;
     bool pending_local_log_filename_valid;
 } ads1278_server_state;
@@ -742,6 +769,7 @@ static int ads1278_dma_arm(
     ads1278_server_state *state,
     const ads1278_server_options *options
 );
+static void ads1278_dma_reassembler_reset(ads1278_server_state *state);
 
 static uint32_t ads1278_build_enable_ctrl(uint32_t ctrl_raw, uint32_t enable_value)
 {
@@ -1122,6 +1150,8 @@ static int ads1278_dma_arm(
     ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_BASE_ADDR, options->dma_base_addr);
     ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_BUF_SIZE, options->dma_buf_size);
 
+    ads1278_dma_reassembler_reset(state);
+
     dma_ctrl = ADS1278_DMA_CTRL_ENABLE
         | (ADS1278_DMA_MODE_CAPTURE << ADS1278_DMA_CTRL_MODE_SHIFT);
     ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_CTRL, dma_ctrl);
@@ -1136,29 +1166,107 @@ static void ads1278_dma_stop(ads1278_server_state *state)
     ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_CTRL, 0u);
 }
 
+static void ads1278_dma_reassembler_reset(ads1278_server_state *state)
+{
+    if (state == NULL) {
+        return;
+    }
+    memset(state->dma_pending_valid, 0, sizeof(state->dma_pending_valid));
+    state->dma_pending_count = 0u;
+    state->have_dma_release_seq = false;
+    state->next_dma_release_seq = 0u;
+    state->have_last_dma_release_ch1 = false;
+    state->last_dma_release_ch1 = 0;
+    state->dma_reject_log_active = false;
+    memset(state->dma_reject_log_counts, 0, sizeof(state->dma_reject_log_counts));
+    memset(state->dma_reject_log_printed, 0, sizeof(state->dma_reject_log_printed));
+}
+
+static bool ads1278_dma_frame_words_valid(const volatile uint32_t *words);
+static bool ads1278_dma_frame_metadata_valid(const volatile uint32_t *words);
+
 static int ads1278_dma_find_frame_start_word(
     const ads1278_ddr_map *ddr,
-    size_t *frame_start_word
+    size_t *frame_start_word,
+    ads1278_dma_phase_score *selected_score
 )
 {
     size_t word_count;
-    size_t index;
+    size_t phase;
+    ads1278_dma_phase_score best_score;
+    ads1278_dma_phase_score second_score;
+    bool have_best_score;
+    bool have_second_score;
 
-    if (ddr == NULL || frame_start_word == NULL || ddr->words == NULL) {
+    if (ddr == NULL || frame_start_word == NULL || ddr->words == NULL || selected_score == NULL) {
         errno = EINVAL;
         return -1;
     }
 
     word_count = ddr->map_size / sizeof(uint32_t);
-    for (index = 0u; index < word_count; ++index) {
-        if (ddr->words[index] == ADS1278_DMA_FRAME_STRIDE_CANARY) {
-            *frame_start_word = (index + 1u) % ADS1278_DMA_FRAME_WORDS;
-            return 0;
+    memset(&best_score, 0, sizeof(best_score));
+    memset(&second_score, 0, sizeof(second_score));
+    have_best_score = false;
+    have_second_score = false;
+
+    for (phase = 0u; phase < ADS1278_DMA_FRAME_WORDS && phase < word_count; ++phase) {
+        ads1278_dma_phase_score score;
+        size_t word_index;
+
+        memset(&score, 0, sizeof(score));
+        score.phase = phase;
+        score.available_records = (word_count - phase) / ADS1278_DMA_FRAME_WORDS;
+
+        for (word_index = phase;
+             word_index + ADS1278_DMA_FRAME_WORDS <= word_count;
+             word_index += ADS1278_DMA_FRAME_WORDS) {
+            const volatile uint32_t *words = &ddr->words[word_index];
+
+            if (!ads1278_dma_frame_words_valid(words)) {
+                score.bad_layout_records += 1u;
+                continue;
+            }
+            score.layout_valid_records += 1u;
+            if (ads1278_dma_frame_metadata_valid(words)) {
+                score.metadata_valid_records += 1u;
+            } else {
+                score.bad_metadata_records += 1u;
+            }
+        }
+
+        if (!have_best_score
+            || score.metadata_valid_records > best_score.metadata_valid_records
+            || (score.metadata_valid_records == best_score.metadata_valid_records
+                && score.layout_valid_records > best_score.layout_valid_records)) {
+            if (have_best_score) {
+                second_score = best_score;
+                have_second_score = true;
+            }
+            best_score = score;
+            have_best_score = true;
+        } else if (!have_second_score
+            || score.metadata_valid_records > second_score.metadata_valid_records
+            || (score.metadata_valid_records == second_score.metadata_valid_records
+                && score.layout_valid_records > second_score.layout_valid_records)) {
+            second_score = score;
+            have_second_score = true;
         }
     }
 
-    errno = EIO;
-    return -1;
+    if (!have_best_score
+        || best_score.available_records == 0u
+        || best_score.metadata_valid_records == 0u
+        || (have_second_score
+            && best_score.metadata_valid_records <= second_score.metadata_valid_records)
+        || (best_score.metadata_valid_records * 4u) < (best_score.available_records * 3u)) {
+        *selected_score = best_score;
+        errno = EIO;
+        return -1;
+    }
+
+    *frame_start_word = best_score.phase;
+    *selected_score = best_score;
+    return 0;
 }
 
 static bool ads1278_dma_frame_words_valid(const volatile uint32_t *words)
@@ -1176,19 +1284,62 @@ static bool ads1278_dma_frame_words_valid(const volatile uint32_t *words)
     return words[ADS1278_DMA_FRAME_WORDS - 1u] == ADS1278_DMA_FRAME_STRIDE_CANARY;
 }
 
-static void ads1278_snapshot_from_dma_words(
-    ads1278_server_state *state,
-    const volatile uint32_t *words
-)
+static bool ads1278_dma_frame_metadata_valid(const volatile uint32_t *words)
 {
-    unsigned int channel;
+    uint32_t frame_count;
+    uint32_t status_raw;
 
-    state->snapshot.status_raw = words[1];
-    state->snapshot.frame_cnt = (uint16_t)words[0];
-    for (channel = 0u; channel < ADS1278_CHANNEL_COUNT; ++channel) {
-        state->snapshot.channels[channel] = (int32_t)words[2u + channel];
+    if (words == NULL) {
+        return false;
     }
-    state->have_snapshot = true;
+
+    frame_count = words[0];
+    status_raw = words[1];
+    if ((frame_count & 0xffff0000u) != 0u) {
+        return false;
+    }
+    if ((uint16_t)frame_count != ads1278_status_frame_count(status_raw)) {
+        return false;
+    }
+    if (!ads1278_status_new_data(status_raw)) {
+        return false;
+    }
+    return !ads1278_status_overflow(status_raw);
+}
+
+typedef enum {
+    ADS1278_DMA_RELEASE_OK = 0,
+    ADS1278_DMA_RELEASE_BAD_LAYOUT,
+    ADS1278_DMA_RELEASE_BAD_METADATA,
+    ADS1278_DMA_RELEASE_OVERFLOW,
+    ADS1278_DMA_RELEASE_REORDERED,
+    ADS1278_DMA_RELEASE_DUPLICATE,
+    ADS1278_DMA_RELEASE_COHERENCE,
+    ADS1278_DMA_RELEASE_QUEUE_FULL
+} ads1278_dma_release_result;
+
+static const char *ads1278_dma_release_result_name(ads1278_dma_release_result result)
+{
+    switch (result) {
+    case ADS1278_DMA_RELEASE_OK:
+        return "ok";
+    case ADS1278_DMA_RELEASE_BAD_LAYOUT:
+        return "bad-layout";
+    case ADS1278_DMA_RELEASE_BAD_METADATA:
+        return "bad-metadata";
+    case ADS1278_DMA_RELEASE_OVERFLOW:
+        return "overflow";
+    case ADS1278_DMA_RELEASE_REORDERED:
+        return "reordered";
+    case ADS1278_DMA_RELEASE_DUPLICATE:
+        return "duplicate";
+    case ADS1278_DMA_RELEASE_COHERENCE:
+        return "coherence";
+    case ADS1278_DMA_RELEASE_QUEUE_FULL:
+        return "queue-full";
+    default:
+        return "unknown";
+    }
 }
 
 static void ads1278_bulk_frame_from_dma_words(
@@ -1203,6 +1354,410 @@ static void ads1278_bulk_frame_from_dma_words(
     for (channel = 0u; channel < ADS1278_CHANNEL_COUNT; ++channel) {
         frame->channels[channel] = (int32_t)words[2u + channel];
     }
+}
+
+static ads1278_dma_release_result ads1278_dma_validate_frame_metadata(
+    const ads1278_bulk_frame *frame
+)
+{
+    uint16_t frame_count;
+    uint16_t status_frame_count;
+
+    if (frame == NULL) {
+        return ADS1278_DMA_RELEASE_BAD_METADATA;
+    }
+
+    frame_count = (uint16_t)frame->frame_count;
+    status_frame_count = ads1278_status_frame_count(frame->status_raw);
+    if ((frame->frame_count & 0xffff0000u) != 0u || frame_count != status_frame_count) {
+        return ADS1278_DMA_RELEASE_BAD_METADATA;
+    }
+    if (!ads1278_status_new_data(frame->status_raw)) {
+        return ADS1278_DMA_RELEASE_BAD_METADATA;
+    }
+    if (ads1278_status_overflow(frame->status_raw)) {
+        return ADS1278_DMA_RELEASE_OVERFLOW;
+    }
+
+    return ADS1278_DMA_RELEASE_OK;
+}
+
+static ads1278_dma_release_result ads1278_dma_parse_frame_candidate(
+    const volatile uint32_t *words,
+    ads1278_bulk_frame *frame
+)
+{
+    if (frame == NULL) {
+        return ADS1278_DMA_RELEASE_BAD_METADATA;
+    }
+    memset(frame, 0, sizeof(*frame));
+    if (!ads1278_dma_frame_words_valid(words)) {
+        return ADS1278_DMA_RELEASE_BAD_LAYOUT;
+    }
+
+    ads1278_bulk_frame_from_dma_words(frame, words);
+    return ads1278_dma_validate_frame_metadata(frame);
+}
+
+static unsigned int ads1278_dma_release_result_index(ads1278_dma_release_result result)
+{
+    if (result < ADS1278_DMA_RELEASE_OK
+        || (unsigned int)result >= ADS1278_DMA_RELEASE_RESULT_COUNT) {
+        return ADS1278_DMA_RELEASE_RESULT_COUNT - 1u;
+    }
+    return (unsigned int)result;
+}
+
+static void ads1278_dma_reject_log_begin(
+    ads1278_server_state *state,
+    unsigned int buffer_index
+)
+{
+    if (state == NULL) {
+        return;
+    }
+    memset(state->dma_reject_log_counts, 0, sizeof(state->dma_reject_log_counts));
+    memset(state->dma_reject_log_printed, 0, sizeof(state->dma_reject_log_printed));
+    state->active_dma_buffer_index = buffer_index;
+    state->dma_reject_log_active = true;
+}
+
+static void ads1278_dma_reject_log_end(ads1278_server_state *state)
+{
+    uint32_t total;
+    unsigned int index;
+
+    if (state == NULL || !state->dma_reject_log_active) {
+        return;
+    }
+
+    total = 0u;
+    for (index = 0u; index < ADS1278_DMA_RELEASE_RESULT_COUNT; ++index) {
+        total += state->dma_reject_log_counts[index];
+    }
+
+    if (total != 0u) {
+        fprintf(
+            stderr,
+            "DMA buffer %u rejects: total=%u bad_layout=%u bad_metadata=%u overflow=%u reordered=%u duplicate=%u coherence=%u queue_full=%u\n",
+            state->active_dma_buffer_index,
+            total,
+            state->dma_reject_log_counts[ADS1278_DMA_RELEASE_BAD_LAYOUT],
+            state->dma_reject_log_counts[ADS1278_DMA_RELEASE_BAD_METADATA],
+            state->dma_reject_log_counts[ADS1278_DMA_RELEASE_OVERFLOW],
+            state->dma_reject_log_counts[ADS1278_DMA_RELEASE_REORDERED],
+            state->dma_reject_log_counts[ADS1278_DMA_RELEASE_DUPLICATE],
+            state->dma_reject_log_counts[ADS1278_DMA_RELEASE_COHERENCE],
+            state->dma_reject_log_counts[ADS1278_DMA_RELEASE_QUEUE_FULL]
+        );
+    }
+    state->dma_reject_log_active = false;
+}
+
+static void ads1278_dma_record_rejected_frame(
+    ads1278_server_state *state,
+    ads1278_dma_release_result result,
+    const ads1278_bulk_frame *frame
+)
+{
+    unsigned int result_index;
+
+    if (state == NULL) {
+        return;
+    }
+
+    result_index = ads1278_dma_release_result_index(result);
+    state->stats.dma_bad_frames += 1u;
+    if (result == ADS1278_DMA_RELEASE_BAD_LAYOUT) {
+        state->stats.dma_bad_canary += 1u;
+    } else if (result == ADS1278_DMA_RELEASE_BAD_METADATA
+        || result == ADS1278_DMA_RELEASE_OVERFLOW) {
+        state->stats.dma_bad_metadata += 1u;
+    } else if (result == ADS1278_DMA_RELEASE_REORDERED) {
+        state->stats.dma_reordered_frames += 1u;
+    } else if (result == ADS1278_DMA_RELEASE_DUPLICATE) {
+        state->stats.dma_duplicate_frames += 1u;
+    } else if (result == ADS1278_DMA_RELEASE_COHERENCE) {
+        state->stats.dma_coherence_rejects += 1u;
+    } else if (result == ADS1278_DMA_RELEASE_QUEUE_FULL) {
+        state->stats.dma_queue_full += 1u;
+    }
+
+    if (state->dma_reject_log_active) {
+        state->dma_reject_log_counts[result_index] += 1u;
+        if (state->dma_reject_log_printed[result_index] >= ADS1278_DMA_REJECT_LOG_FIRST_N) {
+            return;
+        }
+        state->dma_reject_log_printed[result_index] += 1u;
+    }
+    if (frame == NULL) {
+        fprintf(stderr, "DMA frame rejected: reason=%s\n", ads1278_dma_release_result_name(result));
+        return;
+    }
+
+    fprintf(
+        stderr,
+        "DMA frame rejected: reason=%s frame_count=%u status_frame_count=%u status_raw=0x%08x\n",
+        ads1278_dma_release_result_name(result),
+        (unsigned int)frame->frame_count,
+        (unsigned int)ads1278_status_frame_count(frame->status_raw),
+        frame->status_raw
+    );
+}
+
+static bool ads1278_dma_pending_frame_at(
+    const ads1278_server_state *state,
+    uint16_t frame_count,
+    size_t *slot
+)
+{
+    size_t index;
+
+    if (state == NULL) {
+        return false;
+    }
+
+    for (index = 0u; index < ADS1278_DMA_REORDER_CAPACITY; ++index) {
+        if (state->dma_pending_valid[index]
+            && (uint16_t)state->dma_pending_frames[index].frame_count == frame_count) {
+            if (slot != NULL) {
+                *slot = index;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t ads1278_unwrap_frame_count(uint32_t anchor, uint16_t raw_frame_count)
+{
+    int64_t candidate;
+    int64_t lower_bound;
+    int64_t upper_bound;
+
+    candidate = (int64_t)(anchor & 0xffff0000u) + (int64_t)raw_frame_count;
+    lower_bound = (int64_t)anchor - (int64_t)ADS1278_DMA_FRAME_COUNTER_HALF_RANGE;
+    upper_bound = (int64_t)anchor + (int64_t)ADS1278_DMA_FRAME_COUNTER_HALF_RANGE;
+
+    while (candidate < lower_bound) {
+        candidate += (int64_t)ADS1278_DMA_FRAME_COUNTER_MODULUS;
+    }
+    while (candidate > upper_bound) {
+        candidate -= (int64_t)ADS1278_DMA_FRAME_COUNTER_MODULUS;
+    }
+
+    if (candidate < 0) {
+        return 0u;
+    }
+    return (uint32_t)candidate;
+}
+
+static ads1278_dma_release_result ads1278_dma_pending_insert(
+    ads1278_server_state *state,
+    const ads1278_bulk_frame *frame
+)
+{
+    size_t index;
+    uint16_t frame_count;
+
+    if (state == NULL || frame == NULL) {
+        return ADS1278_DMA_RELEASE_BAD_METADATA;
+    }
+
+    frame_count = (uint16_t)frame->frame_count;
+    if (ads1278_dma_pending_frame_at(state, frame_count, NULL)) {
+        return ADS1278_DMA_RELEASE_DUPLICATE;
+    }
+
+    for (index = 0u; index < ADS1278_DMA_REORDER_CAPACITY; ++index) {
+        if (!state->dma_pending_valid[index]) {
+            state->dma_pending_frames[index] = *frame;
+            state->dma_pending_valid[index] = true;
+            state->dma_pending_count += 1u;
+            return ADS1278_DMA_RELEASE_OK;
+        }
+    }
+
+    return ADS1278_DMA_RELEASE_QUEUE_FULL;
+}
+
+static bool ads1278_dma_raw_frame_before(uint16_t candidate, uint16_t reference)
+{
+    return candidate != reference
+        && (uint16_t)(reference - candidate) < ADS1278_DMA_FRAME_COUNTER_HALF_RANGE;
+}
+
+static bool ads1278_dma_pending_min_unwrapped_seq(
+    const ads1278_server_state *state,
+    uint32_t *min_unwrapped
+)
+{
+    size_t index;
+    uint32_t anchor;
+    bool have_min;
+
+    if (state == NULL || min_unwrapped == NULL || state->dma_pending_count == 0u) {
+        return false;
+    }
+
+    *min_unwrapped = 0u;
+    anchor = state->have_dma_release_seq ? state->next_dma_release_seq : 0u;
+    have_min = false;
+    for (index = 0u; index < ADS1278_DMA_REORDER_CAPACITY; ++index) {
+        uint32_t unwrapped;
+
+        if (!state->dma_pending_valid[index]) {
+            continue;
+        }
+        unwrapped = ads1278_unwrap_frame_count(
+            anchor,
+            (uint16_t)state->dma_pending_frames[index].frame_count
+        );
+        if (!have_min) {
+            *min_unwrapped = unwrapped;
+            have_min = true;
+        } else if (unwrapped < *min_unwrapped) {
+            *min_unwrapped = unwrapped;
+        }
+    }
+
+    return have_min;
+}
+
+static bool ads1278_dma_resync_release_seq_if_behind_pending(ads1278_server_state *state)
+{
+    uint32_t min_unwrapped;
+
+    if (!ads1278_dma_pending_min_unwrapped_seq(state, &min_unwrapped)) {
+        return false;
+    }
+    if (!state->have_dma_release_seq) {
+        state->next_dma_release_seq = min_unwrapped;
+        state->have_dma_release_seq = true;
+        return true;
+    }
+    if (min_unwrapped < state->next_dma_release_seq) {
+        state->next_dma_release_seq = min_unwrapped;
+        return true;
+    }
+    return false;
+}
+
+static bool ads1278_dma_select_initial_release_frame(ads1278_server_state *state)
+{
+    size_t index;
+    uint16_t selected_frame_count;
+    bool have_selected_frame_count;
+
+    if (state == NULL || state->dma_pending_count == 0u) {
+        return false;
+    }
+
+    have_selected_frame_count = false;
+    selected_frame_count = 0u;
+    for (index = 0u; index < ADS1278_DMA_REORDER_CAPACITY; ++index) {
+        uint16_t frame_count;
+
+        if (!state->dma_pending_valid[index]) {
+            continue;
+        }
+        frame_count = (uint16_t)state->dma_pending_frames[index].frame_count;
+        if (!ads1278_dma_pending_frame_at(state, (uint16_t)(frame_count - 1u), NULL)
+            && ads1278_dma_pending_frame_at(state, (uint16_t)(frame_count + 1u), NULL)) {
+            if (!have_selected_frame_count
+                || ads1278_dma_raw_frame_before(frame_count, selected_frame_count)) {
+                selected_frame_count = frame_count;
+                have_selected_frame_count = true;
+            }
+        }
+    }
+    if (have_selected_frame_count) {
+        state->next_dma_release_seq = (uint32_t)selected_frame_count;
+        state->have_dma_release_seq = true;
+        return true;
+    }
+
+    for (index = 0u; index < ADS1278_DMA_REORDER_CAPACITY; ++index) {
+        if (state->dma_pending_valid[index]) {
+            state->next_dma_release_seq =
+                (uint32_t)(uint16_t)state->dma_pending_frames[index].frame_count;
+            state->have_dma_release_seq = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ads1278_dma_release_coherent(
+    ads1278_server_state *state,
+    const ads1278_bulk_frame *frame
+)
+{
+    int32_t delta;
+
+    if (state == NULL || frame == NULL || !state->have_last_dma_release_ch1) {
+        return true;
+    }
+
+    delta = frame->channels[0] - state->last_dma_release_ch1;
+    if (delta < 0) {
+        delta = -delta;
+    }
+    return delta <= ADS1278_DMA_CH1_COHERENCE_LIMIT;
+}
+
+static size_t ads1278_dma_drain_release_queue(
+    ads1278_server_state *state,
+    ads1278_bulk_frame *frames,
+    size_t frame_capacity
+)
+{
+    size_t released_count;
+
+    if (state == NULL || frames == NULL || frame_capacity == 0u) {
+        return 0u;
+    }
+    if (!state->have_dma_release_seq
+        && !ads1278_dma_select_initial_release_frame(state)) {
+        return 0u;
+    }
+
+    released_count = 0u;
+    while (released_count < frame_capacity) {
+        size_t slot;
+        ads1278_bulk_frame frame;
+        uint16_t expected_frame_count;
+
+        expected_frame_count = (uint16_t)state->next_dma_release_seq;
+        if (!ads1278_dma_pending_frame_at(state, expected_frame_count, &slot)) {
+            if (ads1278_dma_resync_release_seq_if_behind_pending(state)) {
+                continue;
+            }
+            break;
+        }
+
+        frame = state->dma_pending_frames[slot];
+        frame.frame_count = ads1278_unwrap_frame_count(
+            state->next_dma_release_seq,
+            (uint16_t)frame.frame_count
+        );
+        state->dma_pending_valid[slot] = false;
+        state->dma_pending_count -= 1u;
+
+        if (!ads1278_dma_release_coherent(state, &frame)) {
+            ads1278_dma_record_rejected_frame(state, ADS1278_DMA_RELEASE_COHERENCE, &frame);
+            state->next_dma_release_seq += 1u;
+            continue;
+        }
+
+        frames[released_count++] = frame;
+        state->last_dma_release_ch1 = frame.channels[0];
+        state->have_last_dma_release_ch1 = true;
+        state->next_dma_release_seq += 1u;
+        state->stats.dma_frames_released += 1u;
+    }
+
+    return released_count;
 }
 
 static void ads1278_snapshot_from_bulk_frame(
@@ -1232,6 +1787,7 @@ static int ads1278_send_dma_buffer_bulk(
     ads1278_message header;
     size_t frame_index;
     size_t valid_count;
+    size_t frame_capacity;
     uint32_t base_msg_seq;
 
     if (frame_count > UINT32_MAX) {
@@ -1239,33 +1795,40 @@ static int ads1278_send_dma_buffer_bulk(
         return -1;
     }
 
-    frames = calloc(frame_count, sizeof(*frames));
+    frame_capacity = ADS1278_DMA_REORDER_CAPACITY;
+    frames = calloc(frame_capacity, sizeof(*frames));
     if (frames == NULL) {
         return -1;
     }
 
-    valid_count = 0u;
     for (frame_index = 0u; frame_index < frame_count; ++frame_index) {
         size_t word_index;
         const volatile uint32_t *words;
+        ads1278_bulk_frame frame;
+        ads1278_dma_release_result release_result;
 
         word_index = frame_start_word + (frame_index * ADS1278_DMA_FRAME_WORDS);
         words = &ddr->words[word_index];
-        if (!ads1278_dma_frame_words_valid(words)) {
-            state->stats.dma_bad_frames += 1u;
+        release_result = ads1278_dma_parse_frame_candidate(words, &frame);
+        if (release_result != ADS1278_DMA_RELEASE_OK) {
+            ads1278_dma_record_rejected_frame(state, release_result, &frame);
             continue;
         }
-
-        ads1278_bulk_frame_from_dma_words(&frames[valid_count], words);
-        ads1278_snapshot_from_bulk_frame(state, &frames[valid_count]);
-        valid_count += 1u;
+        state->stats.dma_frames_parsed += 1u;
+        release_result = ads1278_dma_pending_insert(state, &frame);
+        if (release_result != ADS1278_DMA_RELEASE_OK) {
+            ads1278_dma_record_rejected_frame(state, release_result, &frame);
+            continue;
+        }
     }
+    valid_count = ads1278_dma_drain_release_queue(state, frames, frame_capacity);
 
     if (valid_count == 0u) {
         free(frames);
         return 0;
     }
 
+    ads1278_snapshot_from_bulk_frame(state, &frames[valid_count - 1u]);
     base_msg_seq = state->stats.next_msg_seq;
     ads1278_fill_message(
         state,
@@ -1320,26 +1883,52 @@ static int ads1278_send_dma_buffer_samples(
 )
 {
     size_t frame_index;
+    size_t released_index;
+    size_t released_count;
+    ads1278_bulk_frame *frames;
+
+    frames = calloc(ADS1278_DMA_REORDER_CAPACITY, sizeof(*frames));
+    if (frames == NULL) {
+        return -1;
+    }
 
     for (frame_index = 0u; frame_index < frame_count; ++frame_index) {
         size_t word_index;
         const volatile uint32_t *words;
+        ads1278_bulk_frame frame;
+        ads1278_dma_release_result release_result;
 
         word_index = frame_start_word + (frame_index * ADS1278_DMA_FRAME_WORDS);
         words = &ddr->words[word_index];
-        if (!ads1278_dma_frame_words_valid(words)) {
-            state->stats.dma_bad_frames += 1u;
+        release_result = ads1278_dma_parse_frame_candidate(words, &frame);
+        if (release_result != ADS1278_DMA_RELEASE_OK) {
+            ads1278_dma_record_rejected_frame(state, release_result, &frame);
             continue;
         }
+        state->stats.dma_frames_parsed += 1u;
+        release_result = ads1278_dma_pending_insert(state, &frame);
+        if (release_result != ADS1278_DMA_RELEASE_OK) {
+            ads1278_dma_record_rejected_frame(state, release_result, &frame);
+            continue;
+        }
+    }
 
-        ads1278_snapshot_from_dma_words(state, words);
+    released_count = ads1278_dma_drain_release_queue(
+        state,
+        frames,
+        ADS1278_DMA_REORDER_CAPACITY
+    );
+    for (released_index = 0u; released_index < released_count; ++released_index) {
+        ads1278_snapshot_from_bulk_frame(state, &frames[released_index]);
         if (ads1278_send_snapshot_message(client_fd, state, ADS1278_MSG_SAMPLE, 0u, 0u) != 0) {
+            free(frames);
             return -1;
         }
         state->last_streamed_frame_cnt = state->snapshot.frame_cnt;
         state->stats.dma_frames_streamed += 1u;
     }
 
+    free(frames);
     return 0;
 }
 
@@ -1355,6 +1944,8 @@ static int ads1278_send_dma_buffer(
     size_t word_count;
     size_t frame_count;
     uint32_t ack_mask;
+    ads1278_dma_phase_score phase_score;
+    int send_result;
 
     if (state == NULL || buffer_index > 1u || !state->dma.maps_open) {
         errno = EINVAL;
@@ -1363,28 +1954,84 @@ static int ads1278_send_dma_buffer(
 
     ddr = &state->dma.buffers[buffer_index];
     ads1278_ddr_sync_for_cpu((void *)ddr->words, ddr->map_size);
-    if (ads1278_dma_find_frame_start_word(ddr, &frame_start_word) != 0) {
-        return -1;
+    ack_mask = (buffer_index == 0u) ? ADS1278_DMA_BUF_ACK_BUF0 : ADS1278_DMA_BUF_ACK_BUF1;
+    if (ads1278_dma_find_frame_start_word(ddr, &frame_start_word, &phase_score) != 0) {
+        state->stats.dma_bad_frames += 1u;
+        state->stats.dma_bad_canary += 1u;
+        fprintf(
+            stderr,
+            "DMA buffer rejected: buffer=%u best_phase=%zu valid=%zu/%zu layout_valid=%zu bad_layout=%zu bad_metadata=%zu\n",
+            buffer_index,
+            phase_score.phase,
+            phase_score.metadata_valid_records,
+            phase_score.available_records,
+            phase_score.layout_valid_records,
+            phase_score.bad_layout_records,
+            phase_score.bad_metadata_records
+        );
+        ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_BUF_ACK, ack_mask);
+        state->stats.dma_buffers_consumed += 1u;
+        return 0;
     }
 
     word_count = ddr->map_size / sizeof(uint32_t);
     frame_count = (word_count - frame_start_word) / ADS1278_DMA_FRAME_WORDS;
     ads1278_refresh_control_fields(state);
 
+    ads1278_dma_reject_log_begin(state, buffer_index);
     if (bulk_mode) {
-        if (ads1278_send_dma_buffer_bulk(client_fd, state, ddr, frame_start_word, frame_count) != 0) {
-            return -1;
-        }
+        send_result = ads1278_send_dma_buffer_bulk(client_fd, state, ddr, frame_start_word, frame_count);
     } else {
-        if (ads1278_send_dma_buffer_samples(client_fd, state, ddr, frame_start_word, frame_count) != 0) {
-            return -1;
-        }
+        send_result = ads1278_send_dma_buffer_samples(client_fd, state, ddr, frame_start_word, frame_count);
+    }
+    ads1278_dma_reject_log_end(state);
+    if (send_result != 0) {
+        return -1;
     }
 
-    ack_mask = (buffer_index == 0u) ? ADS1278_DMA_BUF_ACK_BUF0 : ADS1278_DMA_BUF_ACK_BUF1;
     ads1278_mmio_write32(&state->mmio, ADS1278_REG_DMA_BUF_ACK, ack_mask);
     state->stats.dma_buffers_consumed += 1u;
     return 0;
+}
+
+static int ads1278_dma_buffer_first_frame_count(
+    ads1278_server_state *state,
+    unsigned int buffer_index,
+    uint16_t *frame_count
+)
+{
+    ads1278_ddr_map *ddr;
+    ads1278_dma_phase_score phase_score;
+    size_t frame_start_word;
+    size_t word_count;
+    size_t frame_index;
+    size_t frame_capacity;
+
+    if (state == NULL || frame_count == NULL || buffer_index > 1u || !state->dma.maps_open) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ddr = &state->dma.buffers[buffer_index];
+    ads1278_ddr_sync_for_cpu((void *)ddr->words, ddr->map_size);
+    if (ads1278_dma_find_frame_start_word(ddr, &frame_start_word, &phase_score) != 0) {
+        return -1;
+    }
+
+    word_count = ddr->map_size / sizeof(uint32_t);
+    frame_capacity = (word_count - frame_start_word) / ADS1278_DMA_FRAME_WORDS;
+    for (frame_index = 0u; frame_index < frame_capacity; ++frame_index) {
+        const volatile uint32_t *words;
+
+        words = &ddr->words[frame_start_word + (frame_index * ADS1278_DMA_FRAME_WORDS)];
+        if (ads1278_dma_frame_words_valid(words) && ads1278_dma_frame_metadata_valid(words)) {
+            *frame_count = (uint16_t)words[0];
+            return 0;
+        }
+    }
+
+    errno = EIO;
+    return -1;
 }
 
 static int ads1278_service_dma_buffers(
@@ -1394,14 +2041,43 @@ static int ads1278_service_dma_buffers(
 )
 {
     uint32_t buf_status;
+    bool buf0_full;
+    bool buf1_full;
 
     buf_status = ads1278_mmio_read32(&state->mmio, ADS1278_REG_DMA_BUF_STATUS);
-    if ((buf_status & ADS1278_DMA_BUF_STATUS_BUF0_FULL) != 0u) {
+    buf0_full = (buf_status & ADS1278_DMA_BUF_STATUS_BUF0_FULL) != 0u;
+    buf1_full = (buf_status & ADS1278_DMA_BUF_STATUS_BUF1_FULL) != 0u;
+
+    if (buf0_full && buf1_full) {
+        uint16_t buf0_first;
+        uint16_t buf1_first;
+        unsigned int first_buffer;
+        unsigned int second_buffer;
+
+        first_buffer = 0u;
+        second_buffer = 1u;
+        if (ads1278_dma_buffer_first_frame_count(state, 0u, &buf0_first) == 0
+            && ads1278_dma_buffer_first_frame_count(state, 1u, &buf1_first) == 0
+            && ads1278_dma_raw_frame_before(buf1_first, buf0_first)) {
+            first_buffer = 1u;
+            second_buffer = 0u;
+        }
+
+        if (ads1278_send_dma_buffer(client_fd, state, first_buffer, bulk_mode) != 0) {
+            return -1;
+        }
+        if (ads1278_send_dma_buffer(client_fd, state, second_buffer, bulk_mode) != 0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    if (buf0_full) {
         if (ads1278_send_dma_buffer(client_fd, state, 0u, bulk_mode) != 0) {
             return -1;
         }
     }
-    if ((buf_status & ADS1278_DMA_BUF_STATUS_BUF1_FULL) != 0u) {
+    if (buf1_full) {
         if (ads1278_send_dma_buffer(client_fd, state, 1u, bulk_mode) != 0) {
             return -1;
         }
@@ -1484,6 +2160,34 @@ static void ads1278_close_client(
         close(*client_fd);
         *client_fd = -1;
     }
+}
+
+static void ads1278_log_server_stats(const ads1278_server_state *state)
+{
+    if (state == NULL) {
+        return;
+    }
+
+    fprintf(
+        stderr,
+        "Server stats: dma_buffers=%u parsed=%u released=%u streamed=%u bulk_messages=%u bad=%u bad_canary=%u bad_metadata=%u gaps=%u reordered=%u duplicates=%u coherence_rejects=%u queue_full=%u unstable_snapshots=%u accepted_commands=%u rejected_commands=%u\n",
+        state->stats.dma_buffers_consumed,
+        state->stats.dma_frames_parsed,
+        state->stats.dma_frames_released,
+        state->stats.dma_frames_streamed,
+        state->stats.dma_bulk_messages_streamed,
+        state->stats.dma_bad_frames,
+        state->stats.dma_bad_canary,
+        state->stats.dma_bad_metadata,
+        state->stats.dma_frame_gaps,
+        state->stats.dma_reordered_frames,
+        state->stats.dma_duplicate_frames,
+        state->stats.dma_coherence_rejects,
+        state->stats.dma_queue_full,
+        state->stats.unstable_snapshot_reads,
+        state->stats.accepted_commands,
+        state->stats.rejected_commands
+    );
 }
 
 int ads1278_server_run(const ads1278_server_options *options)
@@ -1706,6 +2410,7 @@ int ads1278_server_run(const ads1278_server_options *options)
 
     ads1278_close_client(&client_fd, &state, options->dma_mode);
     ads1278_csv_logger_close(&state.local_logger);
+    ads1278_log_server_stats(&state);
     if (listener_fd >= 0) {
         close(listener_fd);
     }

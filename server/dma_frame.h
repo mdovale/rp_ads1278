@@ -40,6 +40,18 @@ typedef struct ADS1278_DMA_PACKED {
     uint32_t padding[22];
 } ads1278_dma_frame;
 
+/*
+ * Server release contract for DMA-backed output:
+ * - words 10..30 are zero and word 31 is ADS1278_DMA_FRAME_STRIDE_CANARY;
+ * - frame_count is the zero-extended 16-bit counter in status_raw[31:16];
+ * - status_raw.new_data is set and status_raw.overflow is clear;
+ * - released records advance the server's DMA sequence monotonically after
+ *   the 16-bit hardware counter is unwrapped in software.
+ *
+ * The server applies this contract before emitting --dma samples,
+ * --dma-bulk payload records, or local CSV rows derived from DMA buffers.
+ */
+
 typedef char ads1278_dma_frame_size_must_be_128_bytes[
     (sizeof(ads1278_dma_frame) == ADS1278_DMA_FRAME_SIZE) ? 1 : -1
 ];

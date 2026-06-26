@@ -30,8 +30,8 @@ Current runtime behavior is:
 - The listener accepts one TCP client at a time on port `5000`.
 - On connect, the server sends `RP_CAP:ads1278_v3\n`, then one initial `SAMPLE` message built from the latest coherent snapshot.
 - While a client is connected, the server schedules MMIO checks from the current `EXTCLK_DIV` so the wake cadence targets about `2 * f_data`, capped by the configured `--poll-ms` maximum wait, and emits a new `SAMPLE` only when `frame_cnt` changes.
-- With `--dma`, the server arms DMA capture mode, watches `DMA_BUF_STATUS`, maps both ping-pong DDR buffers, emits one existing 64-byte `SAMPLE` per valid 128-byte DMA frame, and writes `DMA_BUF_ACK` after each consumed buffer.
-- With `--dma-bulk`, the server also enables DMA mode, but emits one `BULK_SAMPLES` header plus compact 40-byte frame records for each completed buffer before writing `DMA_BUF_ACK`.
+- With `--dma`, the server arms DMA capture mode, watches `DMA_BUF_STATUS`, maps both ping-pong DDR buffers, releases only validated monotonic 128-byte DMA frames as existing 64-byte `SAMPLE` messages, and writes `DMA_BUF_ACK` after each consumed buffer.
+- With `--dma-bulk`, the server also enables DMA mode, but emits one `BULK_SAMPLES` header plus compact 40-byte frame records released from the same validation path before writing `DMA_BUF_ACK`.
 - `START_LOCAL_LOG` opens a CSV under `/mnt/usb/ads1278/logs` by default; `--log-dir PATH` overrides the directory.
 - `SET_LOCAL_LOG_DURATION` sets the duration, in seconds, for the next local USB CSV log. `0` means manual logging.
 - `SET_LOCAL_LOG_FILENAME` sets the next USB CSV basename in 3-byte protocol chunks. If no basename is sent, the server uses `ads1278_YYYYMMDD_HHMMSS.csv`.
@@ -76,8 +76,10 @@ The DMA flow is opt-in with `ads1278-server --dma` or `ads1278-server --dma-bulk
 2. On client connect, program `DMA_BASE_ADDR` / `DMA_BUF_SIZE`, clear stale IRQ/full bits, and write `DMA_CTRL = 0x3` for capture mode.
 3. Poll `DMA_BUF_STATUS` for full ping-pong buffers.
 4. Before parsing a full buffer, sync the DDR mapping for CPU reads and use the canary phase (`0xAD127831`) to find the first complete 128-byte record.
-5. Emit either one legacy `SAMPLE` message per valid DMA frame (`--dma`) or one `BULK_SAMPLES` batch per completed buffer (`--dma-bulk`), then write the matching `DMA_BUF_ACK` bit.
-6. Stop DMA when the client disconnects, unless a timed USB CSV log is active.
+5. When both ping-pong buffers are full, compare their first valid DMA `frame_count` values and service the older half first rather than assuming buf0 is earlier.
+6. Apply the DMA release contract before any TCP or CSV output: padding words must be zero, word 31 must be `0xAD127831`, `frame_count` must equal `status_raw[31:16]`, `new_data` must be set, `overflow` must be clear, and released frame counts must advance monotonically after software unwraps the 16-bit hardware counter.
+7. Emit either one legacy `SAMPLE` message per released DMA frame (`--dma`) or one `BULK_SAMPLES` batch per completed buffer (`--dma-bulk`), then write the matching `DMA_BUF_ACK` bit.
+8. Stop DMA when the client disconnects, unless a timed USB CSV log is active.
 
 The USB CSV workflow is:
 

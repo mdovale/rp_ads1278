@@ -17,12 +17,13 @@ server: $(SERVER_SOURCES) $(SERVER_HEADERS)
 rpdevmem: rpdevmem.c memory_map.c memory_map.h protocol.h dma_frame.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ rpdevmem.c memory_map.c
 
-test: test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map test_csv_logger
+test: test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map test_csv_logger test_dma_stream
 	./test_cmd_parse
 	./test_protocol_layout
 	./test_dma_frame_layout
 	./test_memory_map
 	./test_csv_logger
+	./test_dma_stream
 
 test_cmd_parse: tests/test_cmd_parse.c cmd_parse.c cmd_parse.h protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_cmd_parse.c cmd_parse.c
@@ -39,5 +40,8 @@ test_memory_map: tests/test_memory_map.c memory_map.h protocol.h
 test_csv_logger: tests/test_csv_logger.c csv_logger.c csv_logger.h protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_csv_logger.c csv_logger.c
 
+test_dma_stream: tests/test_dma_stream.c server.c server.h memory_map.c memory_map.h cmd_parse.c cmd_parse.h csv_logger.c csv_logger.h protocol.h dma_frame.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_dma_stream.c memory_map.c cmd_parse.c csv_logger.c
+
 clean:
-	rm -f server rpdevmem test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map test_csv_logger
+	rm -f server rpdevmem test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map test_csv_logger test_dma_stream
