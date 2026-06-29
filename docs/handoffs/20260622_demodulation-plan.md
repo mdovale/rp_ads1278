@@ -118,6 +118,22 @@ Plot **CH1** (raw) and **CH8** (demod) in the client.
 3. CH8 is slow/smooth (~10 updates/s) with demod on
 4. CH8 is raw again with demod off
 
+## Post-edge sample skip
+
+The demod path now has an MMIO-only settling-time knob:
+
+```sh
+ads1278-rpdevmem write 0x6c <N_SKIP>
+ads1278-rpdevmem read 0x6c
+ads1278-rpdevmem write 0x24 0x6    # enable acquisition + demod
+```
+
+`DEMOD_SKIP` is at `0x6C`, resets to `0`, and uses bits `[15:0]`. A value of `0` keeps the original behavior. A non-zero value skips the first `N_SKIP` ADC samples after every MOD edge before adding CH1 into the positive or negative half-cycle sum.
+
+Bring-up check: capture CH8 demod data with `N_SKIP=0`, then with the calibrated skip count from the notebook edge-settling analysis, and compare ASD/noise around the demod output. CH1 raw data should be unchanged; only the CH8 demod replacement path is affected when `CTRL[2]` is enabled.
+
+Keep `N_SKIP` below the available samples in a MOD half-cycle. If the skip window consumes an entire half-cycle, the empty-count guard preserves the previous half-cycle average and CH8 can appear held.
+
 ## Not in v1
 
 - Client GUI toggle for demod

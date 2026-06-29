@@ -32,6 +32,7 @@ Current server-visible register map:
 | `0x24` | `CTRL` | R/W | Bit `0` = one-shot `SYNC` trigger, bit `1` = acquisition enable, bit `2` = demod enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared divider value used by current FPGA clocking logic |
 | `0x5C` | `MOD_DIV` | R/W | `0` holds MOD high; `>= 2` is the modulation square-wave half-period divider |
+| `0x6C` | `DEMOD_SKIP` | R/W | Bits `[15:0]` = ADC samples skipped after every MOD edge before CH1 enters the demod average |
 
 Phase 1 freeze for DMA bring-up:
 
@@ -62,6 +63,7 @@ Current behavior a server can rely on:
 - `CTRL` resets to `0`, so acquisition starts disabled after reset.
 - `EXTCLK_DIV` resets to `625` (`0x271`).
 - `MOD_DIV` resets to `6,250,000`, which generates a nominal `10 Hz` square wave. Writing `0` disables toggling and holds MOD high.
+- `DEMOD_SKIP` resets to `0`, so demod includes every CH1 sample by default. Non-zero values skip the first N ADC samples after each MOD edge before accumulating the positive or negative half-cycle average.
 - Channel registers update together after a complete 192-bit TDM frame is captured.
 - `frame_cnt` increments once per latched frame and resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
@@ -92,7 +94,7 @@ The MMIO contract is implemented by `ads1278_axi_slave`, which is connected to t
 Ownership and data flow are:
 
 1. The PS accesses the FPGA over AXI4-Lite through the shared `axi4_lite_if` bus.
-2. `ads1278_axi_slave` decodes reads and writes for `CTRL`, `EXTCLK_DIV`, `MOD_DIV`, channel data, and `STATUS`.
+2. `ads1278_axi_slave` decodes reads and writes for `CTRL`, `EXTCLK_DIV`, `MOD_DIV`, `DEMOD_SKIP`, channel data, and `STATUS`.
 3. `ads1278_axi_slave` forwards control values into `ads1278_acq_top`.
 4. `ads1278_acq_top` returns:
    - eight 32-bit channel words
@@ -129,7 +131,9 @@ Useful checks for the current server bring-up path:
 
 - Map `0x42000000` for `0x1000` bytes and confirm reads do not bus-fault on a correctly loaded design.
 - Read `CTRL`, `EXTCLK_DIV`, `MOD_DIV`, and `STATUS` before enabling acquisition to confirm reset-state expectations.
+- Read `DEMOD_SKIP` before enabling demod and confirm it resets to `0`.
 - Write `CTRL[1] = 1` and confirm `EXTCLK` and acquisition-related behavior begin.
+- Write `DEMOD_SKIP` with the calibrated post-edge skip count, then enable demod with `CTRL = 0x6`.
 - Read `frame_cnt` repeatedly and confirm it advances during successful acquisition.
 - Read `FIFO_STATUS` during acquisition and confirm the queued-frame level rises from zero.
 - Continue acquisition long enough to confirm `FIFO_DROPS` increments once the staged FIFO reaches capacity.

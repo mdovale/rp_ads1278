@@ -33,6 +33,7 @@
 //                          [3] overwrite_pending
 //   0x64  DMA_BUF_ACK W1C Clear buf0_full / buf1_full software ownership bits
 //   0x68  DMA_OVERWRITE_COUNT R Number of buffer-full overwrite events
+//   0x6C  DEMOD_SKIP R/W  Number of post-MOD-edge ADC samples to skip
 ////////////////////////////////////////////////////////////////////////////////
 
 module ads1278_axi_slave #(
@@ -95,6 +96,7 @@ localparam int unsigned REG_MOD_DIV      = 'h17;
 localparam int unsigned REG_DMA_BUF_STAT = 'h18;
 localparam int unsigned REG_DMA_BUF_ACK  = 'h19;
 localparam int unsigned REG_DMA_OVERWRITES = 'h1A;
+localparam int unsigned REG_DEMOD_SKIP    = 'h1B;
 
 // AXI latched addresses
 logic [AW-1:ADDR_LSB] axi_awaddr;
@@ -127,6 +129,7 @@ logic [DW-1:0] dma_overwrite_count_reg;
 logic [DW-1:0] dma_irq_ack_mask;
 logic [DW-1:0] dma_buf_ack_mask;
 logic [DW-1:0] mod_div_reg;
+logic [15:0] demod_skip_reg;
 logic [1:0] dma_buf_full_reg;
 logic dma_active_buf_reg;
 logic dma_enable_prev;
@@ -212,6 +215,7 @@ logic [DW-1:0] read_dma_irq_status_reg;
 logic [DW-1:0] read_mod_div_reg;
 logic [DW-1:0] read_dma_buf_status_reg;
 logic [DW-1:0] read_dma_overwrite_count_reg;
+logic [DW-1:0] read_demod_skip_reg;
 
 // ---- Acquisition core ----
 ads1278_acq_top u_acq (
@@ -241,7 +245,8 @@ ads1278_acq_top u_acq (
   .ctrl_enable  (ctrl_enable),
   .demod_enable (demod_enable),
   .sync_trigger (sync_trigger),
-  .extclk_div   (extclk_div_reg)
+  .extclk_div   (extclk_div_reg),
+  .demod_skip   (demod_skip_reg)
 );
 
 // ---- Modulation square wave ----
@@ -301,6 +306,7 @@ if (~bus.ARESETn) begin
   dma_base_addr_reg <= 32'h1E00_0000;
   dma_buf_size_reg  <= 32'h0001_0000;
   mod_div_reg    <= MOD_DIV_DEFAULT;
+  demod_skip_reg <= 16'd0;
 end else begin
   // Auto-clear SYNC trigger after one cycle
   ctrl_reg[0] <= 1'b0;
@@ -330,6 +336,10 @@ end else begin
       REG_MOD_DIV: begin // MOD_DIV @ 0x5C
         for (int unsigned i = 0; i < (DW/8); i++)
           if (bus.WSTRB[i]) mod_div_reg[(i*8)+:8] <= bus.WDATA[(i*8)+:8];
+      end
+      REG_DEMOD_SKIP: begin // DEMOD_SKIP @ 0x6C
+        if (bus.WSTRB[0]) demod_skip_reg[7:0] <= bus.WDATA[7:0];
+        if (bus.WSTRB[1]) demod_skip_reg[15:8] <= bus.WDATA[15:8];
       end
       default: ;
     endcase
@@ -434,6 +444,7 @@ if (~bus.ARESETn) begin
   read_mod_div_reg <= '0;
   read_dma_buf_status_reg <= '0;
   read_dma_overwrite_count_reg <= '0;
+  read_demod_skip_reg <= '0;
   for (int unsigned i = 0; i < 8; i++)
     read_ch_data[i] <= '0;
 end else if (slv_reg_rden) begin
@@ -454,6 +465,7 @@ end else if (slv_reg_rden) begin
   read_mod_div_reg <= mod_div_reg;
   read_dma_buf_status_reg <= dma_buf_status_reg;
   read_dma_overwrite_count_reg <= dma_overwrite_count_reg;
+  read_demod_skip_reg <= {16'd0, demod_skip_reg};
   for (int unsigned i = 0; i < 8; i++)
     read_ch_data[i] <= ch_data[i];
 end
@@ -498,6 +510,7 @@ end else if (read_pending & ~bus.RVALID) begin
     REG_DMA_BUF_STAT: bus.RDATA <= read_dma_buf_status_reg;
     REG_DMA_BUF_ACK: bus.RDATA <= 32'h0000_0000;
     REG_DMA_OVERWRITES: bus.RDATA <= read_dma_overwrite_count_reg;
+    REG_DEMOD_SKIP: bus.RDATA <= read_demod_skip_reg;
     default: bus.RDATA <= 32'hDEAD_BEEF;
   endcase
 end

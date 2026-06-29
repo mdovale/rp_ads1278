@@ -13,6 +13,7 @@ module ads1278_demod (
     input  wire        new_data,
     input  wire        mod_i,
     input  wire [23:0] sample,
+    input  wire [15:0] demod_skip,
     output reg  [31:0] demod_out
 );
 
@@ -20,12 +21,15 @@ reg signed [47:0] sum_pos;
 reg signed [47:0] sum_neg;
 reg [15:0]        count_pos;
 reg [15:0]        count_neg;
+reg [15:0]        post_edge_count;
 reg signed [31:0] avg_pos;
 reg signed [31:0] avg_neg;
 reg               mod_prev;
 
 wire signed [31:0] sample_s = {{8{sample[23]}}, sample};
 wire               mod_edge = mod_i ^ mod_prev;
+wire [15:0]        post_edge_count_current = mod_edge ? 16'd0 : post_edge_count;
+wire               skip_sample = post_edge_count_current < demod_skip;
 wire signed [31:0] pos_avg_next =
     (count_pos != 16'd0) ? (sum_pos / $signed({16'd0, count_pos})) : avg_pos;
 wire signed [31:0] neg_avg_next =
@@ -37,6 +41,7 @@ always @(posedge clk or negedge rstn) begin
         sum_neg   <= 48'sd0;
         count_pos <= 16'd0;
         count_neg <= 16'd0;
+        post_edge_count <= 16'd0;
         avg_pos   <= 32'sd0;
         avg_neg   <= 32'sd0;
         mod_prev  <= 1'b0;
@@ -46,6 +51,7 @@ always @(posedge clk or negedge rstn) begin
         sum_neg   <= 48'sd0;
         count_pos <= 16'd0;
         count_neg <= 16'd0;
+        post_edge_count <= 16'd0;
         avg_pos   <= 32'sd0;
         avg_neg   <= 32'sd0;
         mod_prev  <= mod_i;
@@ -64,14 +70,20 @@ always @(posedge clk or negedge rstn) begin
             end
         end
 
-        if (mod_i) begin
-            sum_pos   <= (mod_edge && mod_prev) ? {{16{sample_s[31]}}, sample_s}
-                         : sum_pos + {{16{sample_s[31]}}, sample_s};
-            count_pos <= (mod_edge && mod_prev) ? 16'd1 : count_pos + 16'd1;
+        if (skip_sample) begin
+            post_edge_count <= post_edge_count_current + 16'd1;
         end else begin
-            sum_neg   <= (mod_edge && !mod_prev) ? {{16{sample_s[31]}}, sample_s}
-                         : sum_neg + {{16{sample_s[31]}}, sample_s};
-            count_neg <= (mod_edge && !mod_prev) ? 16'd1 : count_neg + 16'd1;
+            post_edge_count <= post_edge_count_current;
+
+            if (mod_i) begin
+                sum_pos   <= (mod_edge && mod_prev) ? {{16{sample_s[31]}}, sample_s}
+                             : sum_pos + {{16{sample_s[31]}}, sample_s};
+                count_pos <= (mod_edge && mod_prev) ? 16'd1 : count_pos + 16'd1;
+            end else begin
+                sum_neg   <= (mod_edge && !mod_prev) ? {{16{sample_s[31]}}, sample_s}
+                             : sum_neg + {{16{sample_s[31]}}, sample_s};
+                count_neg <= (mod_edge && !mod_prev) ? 16'd1 : count_neg + 16'd1;
+            end
         end
 
         mod_prev <= mod_i;

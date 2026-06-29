@@ -37,7 +37,8 @@ module ads1278_acq_top (
     input  wire        ctrl_enable,
     input  wire        demod_enable,
     input  wire        sync_trigger,
-    input  wire [31:0] extclk_div
+    input  wire [31:0] extclk_div,
+    input  wire [15:0] demod_skip
 );
 
 localparam integer DMA_FIFO_DEPTH = 512;
@@ -106,6 +107,7 @@ ads1278_demod u_demod_ch1 (
     .new_data  (spi_new_data),
     .mod_i     (mod_i),
     .sample    (spi_ch0),
+    .demod_skip(demod_skip),
     .demod_out (demod_ch1)
 );
 

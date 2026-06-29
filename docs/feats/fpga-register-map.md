@@ -4,7 +4,7 @@ This doc covers the current MMIO register block exposed by the FPGA acquisition 
 
 ## Goal
 
-Define the current register-level behavior that software can rely on when reading samples, enabling acquisition, triggering `SYNC`, configuring the shared clock divider, and configuring the modulation output divider.
+Define the current register-level behavior that software can rely on when reading samples, enabling acquisition, triggering `SYNC`, configuring the shared clock divider, configuring the modulation output divider, and tuning demod post-edge sample skipping.
 
 ## Scope
 
@@ -46,6 +46,7 @@ The current register map is:
 | `0x60` | `DMA_BUF_STATUS` | R | Ping-pong ownership: bit `0` = buffer 0 full, bit `1` = buffer 1 full, bit `2` = active hardware buffer, bit `3` = overwrite pending |
 | `0x64` | `DMA_BUF_ACK` | W1C | Software-consumed buffer acknowledgement: bit `0` clears buffer 0 full, bit `1` clears buffer 1 full |
 | `0x68` | `DMA_OVERWRITE_COUNT` | R | Count of times DMA advanced into a buffer still marked full |
+| `0x6C` | `DEMOD_SKIP` | R/W | Bits `[15:0]` = number of ADC samples to skip after each MOD edge before CH1 contributes to the demod half-cycle average |
 
 Current read and write semantics:
 
@@ -62,6 +63,7 @@ Current read and write semantics:
 - `DMA_BUF_SIZE` is interpreted as one ping-pong buffer size; buffer 0 starts at `DMA_BASE_ADDR`, and buffer 1 starts at `DMA_BASE_ADDR + DMA_BUF_SIZE`.
 - If DMA wraps into a buffer whose full bit is still set, hardware increments `DMA_OVERWRITE_COUNT` and sets the overwrite-pending bit instead of silently hiding the ownership violation.
 - `MOD_DIV` resets to `6,250,000`, which corresponds to a nominal `10 Hz` modulation square wave from a `125 MHz` input clock. Writing `0` disables toggling and holds the MOD output high.
+- `DEMOD_SKIP` resets to `0`, preserving the original demod behavior. When non-zero, the first `DEMOD_SKIP[15:0]` ADC samples after every MOD edge are excluded from `sum_pos` / `sum_neg`; if a half-cycle has no accumulated samples, the demod path keeps the previous average through the existing empty-count guard.
 
 Important current caveats:
 
@@ -81,6 +83,7 @@ Control and data flow are:
    - `ctrl_reg`
    - `extclk_div_reg`
    - `mod_div_reg`
+   - `demod_skip_reg`
    - DMA phase-4 control registers
 3. Those control signals feed `ads1278_acq_top`, which owns the acquisition datapath.
 4. `ads1278_acq_top` instantiates:
@@ -101,6 +104,7 @@ Reset and lifecycle notes:
 - `CTRL` resets to `0`, so acquisition starts disabled.
 - `EXTCLK_DIV` resets to `625`.
 - `MOD_DIV` resets to `6,250,000`, so the modulation output starts at `10 Hz`. Writing `0` holds the output high.
+- `DEMOD_SKIP` resets to `0`, so CH8 demod includes every CH1 sample until software writes a calibrated skip count.
 - `frame_cnt` resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
 - The channel registers update only when a full 192-bit frame is captured and latched.
