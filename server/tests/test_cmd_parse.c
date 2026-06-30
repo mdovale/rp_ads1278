@@ -1,4 +1,5 @@
 #include "cmd_parse.h"
+#include "csv_logger.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -114,7 +115,10 @@ static void test_local_log_commands_validation(void)
     command.value = 0xffu;
     assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
 
-    command.value = 0x100u;
+    command.value = ADS1278_LOCAL_LOG_CH8_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+
+    command.value = 0x200u;
     assert(ads1278_command_validate(&command) == ADS1278_CMD_ERR_INVALID_LOCAL_LOG_MASK);
 
     command.opcode = ADS1278_OPCODE_STOP_LOCAL_LOG;

@@ -33,6 +33,7 @@ Current runtime behavior is:
 - With `--dma`, the server arms DMA capture mode, watches `DMA_BUF_STATUS`, maps both ping-pong DDR buffers, emits one existing 64-byte `SAMPLE` per valid 128-byte DMA frame, and writes `DMA_BUF_ACK` after each consumed buffer.
 - With `--dma-bulk`, the server also enables DMA mode, but emits one `BULK_SAMPLES` header plus compact 40-byte frame records for each completed buffer before writing `DMA_BUF_ACK`.
 - `START_LOCAL_LOG` opens a CSV under `/mnt/usb/ads1278/logs` by default; `--log-dir PATH` overrides the directory.
+- `START_LOCAL_LOG` bit `8` requests demod-rate logging for CH8-only captures. The server rejects that start with `ERROR` unless the current control snapshot has acquisition plus demod enabled (`CTRL & 0x6 == 0x6`).
 - `SET_LOCAL_LOG_DURATION` sets the duration, in seconds, for the next local USB CSV log. `0` means manual logging.
 - `SET_LOCAL_LOG_FILENAME` sets the next USB CSV basename in 3-byte protocol chunks. If no basename is sent, the server uses `ads1278_YYYYMMDD_HHMMSS.csv`.
 - Timed USB CSV logging continues after the GUI client disconnects until the server deadline expires. Manual USB CSV logging closes on disconnect to avoid unbounded writes.
@@ -84,7 +85,7 @@ The USB CSV workflow is:
 1. Mount the flash stick at `/mnt/usb`.
 2. Run `/root/ads1278-server --dma-bulk --poll-ms 0 --log-dir /mnt/usb/ads1278/logs`, preferably through systemd.
 3. The client sends `MARK_CAPTURE`, `SET_LOCAL_LOG_DURATION`, optional `SET_LOCAL_LOG_FILENAME` chunks, and `START_LOCAL_LOG`.
-4. The server writes rows for legacy samples, DMA samples, or expanded DMA bulk frames.
+4. The server writes rows for legacy samples, DMA samples, or expanded DMA bulk frames. With demod-rate CH8 logging requested, it writes only the first row, CH8 changes, or the elapsed demod frame interval.
 5. If the log is timed and the client disconnects, the server keeps servicing acquisition without a client until the deadline.
 6. On deadline, `STOP_LOCAL_LOG`, server shutdown, or manual disconnect for untimed logs, the CSV is flushed and closed.
 
@@ -110,6 +111,7 @@ The USB CSV workflow is:
 - Run `ads1278-server --dma-bulk --poll-ms 0` on the board, connect the updated client, and confirm completed buffers arrive as bulk-expanded samples while `DMA_OVERWRITE_COUNT` stays flat.
 - Send `SET_ENABLE`, `TRIGGER_SYNC`, `SET_EXTCLK_DIV`, and `SET_MOD_DIV` commands and confirm `ACK` messages echo the opcode/value pair and updated snapshot fields.
 - Mount a USB stick at `/mnt/usb`, run `/root/ads1278-server --dma-bulk --poll-ms 0 --log-dir /mnt/usb/ads1278/logs`, start a 60 s USB CSV capture from the client, disconnect the GUI, and confirm the file keeps growing until the deadline.
+- With CH8-only logging and `CTRL & 0x6 == 0x6`, enable demod-rate CSV and confirm row count is near the MOD rate; with acquisition-only control, confirm `START_LOCAL_LOG` returns `ERROR`.
 - Confirm `sync && umount /mnt/usb` succeeds before unplugging the stick.
 
 ## Key files

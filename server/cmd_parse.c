@@ -67,7 +67,7 @@ ads1278_cmd_validation_result ads1278_command_validate(const ads1278_command *co
     case ADS1278_OPCODE_SET_LOCAL_LOG_FILENAME:
         return ADS1278_CMD_VALID;
     case ADS1278_OPCODE_START_LOCAL_LOG:
-        if ((command->value & ~ADS1278_LOCAL_LOG_CHANNEL_MASK) == 0u) {
+        if ((command->value & ~ADS1278_LOCAL_LOG_VALUE_MASK) == 0u) {
             return ADS1278_CMD_VALID;
         }
         return ADS1278_CMD_ERR_INVALID_LOCAL_LOG_MASK;
@@ -100,7 +100,7 @@ const char *ads1278_cmd_validation_result_string(ads1278_cmd_validation_result r
     case ADS1278_CMD_ERR_INVALID_MOD_DIV:
         return "SET_MOD_DIV requires value 0 or >= 2";
     case ADS1278_CMD_ERR_INVALID_LOCAL_LOG_MASK:
-        return "START_LOCAL_LOG channel mask must use only bits 0..7";
+        return "START_LOCAL_LOG value must use channel bits 0..7 and optional bit 8";
     default:
         return "invalid command";
     }

@@ -42,7 +42,7 @@ Current opcodes are:
 | `3` | `SET_EXTCLK_DIV` | `value` must be `>= 3` |
 | `4` | `MARK_CAPTURE` | `value` is ignored by the server |
 | `5` | `SET_MOD_DIV` | `value` must be `0` or `>= 2`; `0` holds MOD high |
-| `6` | `START_LOCAL_LOG` | `value` is an 8-bit channel mask; `0` means all channels |
+| `6` | `START_LOCAL_LOG` | Bits `0..7` are the channel mask (`0` means all channels); bit `8` requests demod-rate CH8 logging |
 | `7` | `STOP_LOCAL_LOG` | `value` is ignored on request; `ACK.value` reports rows written |
 | `8` | `SET_LOCAL_LOG_DURATION` | Whole seconds for the next local log; `0` means manual/untimed |
 | `9` | `SET_LOCAL_LOG_FILENAME` | One 3-byte ASCII chunk of the next local log basename |
@@ -54,9 +54,11 @@ USB CSV logging commands are ordered by the client as:
 1. `MARK_CAPTURE` to establish a stream boundary.
 2. `SET_LOCAL_LOG_DURATION` with `0` for manual logging or a positive whole-second duration for unattended logging.
 3. One or more `SET_LOCAL_LOG_FILENAME` chunks. Bits `31:24` are the chunk index; bits `23:0` are up to three little-endian ASCII bytes. The server clears the pending basename when chunk `0` arrives and terminates the basename at the first NUL byte.
-4. `START_LOCAL_LOG` with the selected channel mask.
+4. `START_LOCAL_LOG` with the selected channel mask and optional demod-rate bit.
 
-`START_LOCAL_LOG` opens a CSV under the server log directory (`/mnt/usb/ads1278/logs` by default, or `--log-dir PATH`). If opening fails because the USB stick is not mounted, the filesystem is full, or the basename is invalid, the server sends `ERROR`. Timed local logs continue after the TCP client disconnects until the server deadline expires. Manual local logs are closed on client disconnect to avoid unbounded writes.
+`START_LOCAL_LOG` opens a CSV under the server log directory (`/mnt/usb/ads1278/logs` by default, or `--log-dir PATH`). If opening fails because the USB stick is not mounted, the filesystem is full, or the basename is invalid, the server sends `ERROR`. If bit `8` is set, the server also requires the current `CTRL` snapshot to have acquisition plus demod enabled (`CTRL & 0x6 == 0x6`) before it starts; otherwise it sends `ERROR`. Timed local logs continue after the TCP client disconnects until the server deadline expires. Manual local logs are closed on client disconnect to avoid unbounded writes.
+
+When bit `8` is set and CH8 is the only selected channel, the CSV writer gates rows to the demod update cadence. It writes the first row, any later row where CH8 changes, or a row after `max(1, round(mod_div / (extclk_div * 512)))` ADC frames so flat signals still advance in time. It writes at most one row for a given ADC frame. If demod acquisition is not active after the log has started, rows fall back to the full ADC-rate stream.
 
 Server-to-client legacy/control messages use a fixed 64-byte header:
 
@@ -105,7 +107,7 @@ Emission rules are:
 - Send `SAMPLE` when `frame_cnt` changes.
 - In `--dma` mode, send one existing `SAMPLE` message per valid 128-byte DMA frame from a completed DDR ping-pong buffer, then ACK that buffer in MMIO.
 - In `--dma-bulk` mode, send one `BULK_SAMPLES` header plus compact records for valid frames in the completed DDR ping-pong buffer, then ACK that buffer in MMIO.
-- When USB CSV logging is active, the server writes the same logical samples to the CSV before socket emission. If a timed log remains active after client disconnect, the server keeps consuming legacy samples or DMA buffers with `client_fd == -1` until the deadline.
+- When USB CSV logging is active, the server writes the same logical samples to the CSV before socket emission, optionally gated by demod-rate CH8 logging. If a timed log remains active after client disconnect, the server keeps consuming legacy samples or DMA buffers with `client_fd == -1` until the deadline.
 - `ACK` and `ERROR` carry the same snapshot fields as `SAMPLE`, so a client can always treat the message as both a response and a state update.
 
 ## Architecture
@@ -137,6 +139,7 @@ In legacy mode, protocol messages expose current state, not a guaranteed lossles
 - Send `SET_EXTCLK_DIV 2` and confirm the next response is `ERROR`.
 - Send `SET_MOD_DIV 6250000` and confirm the next response is `ACK` with `mod_div = 6250000`.
 - Send `MARK_CAPTURE`, `SET_LOCAL_LOG_DURATION 60`, filename chunks, then `START_LOCAL_LOG 0`; confirm a CSV appears under `/mnt/usb/ads1278/logs` and continues after client disconnect until the deadline.
+- With `CTRL & 0x6 == 0x6`, send `START_LOCAL_LOG 0x180` and confirm CH8 rows are reduced to the demod cadence; with `CTRL & 0x6 != 0x6`, confirm the server returns `ERROR`.
 - Confirm negative channel inputs appear as negative signed 32-bit values in the binary message payload.
 
 ## Key files

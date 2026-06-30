@@ -88,6 +88,7 @@ class PendingLoggingRequest:
     duration_s: Optional[float]
     channel_indices: tuple[int, ...]
     destination: "LogDestination"
+    demod_rate: bool
 
 
 class LogDestination(Enum):
@@ -177,6 +178,7 @@ class ClientController:
         *,
         destination: LogDestination = LogDestination.LOCAL_COMPUTER,
         local_directory: str | Path | None = None,
+        demod_rate: bool = False,
     ) -> None:
         candidate = Path(filename)
         if destination is LogDestination.LOCAL_COMPUTER and local_directory is None and candidate.parent != Path("."):
@@ -195,9 +197,20 @@ class ClientController:
             logging_path = usb_csv_path_hint(normalized_filename)
         duration = self._normalize_logging_duration(duration_s)
         indices = self._normalize_channel_indices(channel_indices)
+        if demod_rate and indices != (CHANNEL_COUNT - 1,):
+            raise ValueError("demod-rate CSV logging requires CH8 only")
         with self._lock:
             if not self._connected:
                 raise RuntimeError("must be connected before starting CSV capture")
+            if (
+                demod_rate
+                and destination is LogDestination.USB_RED_PITAYA
+                and (
+                    self._latest_message is None
+                    or (self._latest_message.ctrl_raw & 0x6) != 0x6
+                )
+            ):
+                raise RuntimeError("USB demod-rate CSV requires acquisition + demod enabled")
             self._cancel_pending_logging_locked()
             self._close_logger_locked()
             self._logging_path = logging_path
@@ -209,6 +222,7 @@ class ClientController:
                     duration,
                     indices,
                     destination,
+                    demod_rate,
                 )
             )
             target = "USB CSV capture" if destination is LogDestination.USB_RED_PITAYA else "CSV capture"
@@ -394,7 +408,12 @@ class ClientController:
                 if request.filename:
                     for command in pack_set_local_log_filename(request.filename):
                         self._transport.send_command(command)
-                self._transport.send_command(pack_start_local_log(request.channel_indices))
+                self._transport.send_command(
+                    pack_start_local_log(
+                        request.channel_indices,
+                        demod_rate=request.demod_rate,
+                    )
+                )
             except Exception as exc:
                 self._clear_logging_state_locked()
                 self._status_text = f"Failed to start USB CSV logging: {exc}"
@@ -409,6 +428,7 @@ class ClientController:
             self._logger = SampleCsvLogger(
                 request.path,
                 channel_indices=request.channel_indices,
+                demod_rate=request.demod_rate,
             )
         except Exception as exc:
             self._close_logger_locked()
@@ -499,7 +519,7 @@ class ClientController:
 
     def _cancel_pending_logging_locked(self) -> None:
         self._pending_logging_requests = deque(
-            PendingLoggingRequest(None, "", None, (), LogDestination.LOCAL_COMPUTER)
+            PendingLoggingRequest(None, "", None, (), LogDestination.LOCAL_COMPUTER, False)
             for _ in self._pending_logging_requests
         )
 

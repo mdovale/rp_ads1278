@@ -38,6 +38,7 @@ from ads1278_client.protocol import (
     pack_stop_local_log,
 )
 from ads1278_client.units import (
+    frames_per_demod,
     frame_counts_to_relative_seconds,
     raw_codes_to_volts,
     sample_indices_to_relative_seconds,
@@ -89,6 +90,8 @@ def test_unit_helpers_convert_adc_codes_and_frame_counts() -> None:
     assert np.allclose(volts, [-2.5, 0.0, 1.25])
     assert np.isclose(sample_period_seconds(625), 0.00512)
     assert np.isclose(sample_rate_hz(625), 195.3125)
+    assert frames_per_demod(extclk_div=1, mod_div=5120) == 10
+    assert frames_per_demod(extclk_div=625, mod_div=1) == 1
     assert np.allclose(
         frame_counts_to_relative_seconds(
             np.asarray([65534, 65535, 0], dtype=np.int32),
@@ -424,6 +427,90 @@ def test_controller_arms_server_timed_usb_csv_without_client_timer(monkeypatch) 
     assert "123 rows" in controller.get_snapshot().status_text
 
 
+def test_controller_sends_demod_rate_bit_for_usb_ch8_logging(monkeypatch) -> None:
+    sent_commands = []
+
+    class FakeTransportClient:
+        def __init__(self, on_message, on_connected, on_disconnected, on_error) -> None:
+            self.on_message = on_message
+            self.on_connected = on_connected
+            self.on_disconnected = on_disconnected
+            self.on_error = on_error
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def send_command(self, payload: bytes) -> None:
+            sent_commands.append(payload)
+
+        def is_connected(self) -> bool:
+            return True
+
+    monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
+
+    controller = ClientController()
+    controller._handle_connected("RP_CAP:ads1278_v3")
+    controller._handle_message(_message(ctrl_raw=0x00000006))
+
+    controller.start_logging(
+        "usb_demod",
+        channel_indices=(7,),
+        destination=LogDestination.USB_RED_PITAYA,
+        demod_rate=True,
+    )
+    controller._handle_message(
+        _message(
+            msg_type=MessageType.ACK,
+            msg_seq=9,
+            opcode=CommandOpcode.MARK_CAPTURE,
+            value=0,
+            ctrl_raw=0x00000006,
+        )
+    )
+
+    assert sent_commands == [
+        pack_mark_capture(),
+        pack_set_local_log_duration(None),
+        *pack_set_local_log_filename("usb_demod.csv"),
+        pack_start_local_log((7,), demod_rate=True),
+    ]
+
+
+def test_controller_rejects_usb_demod_rate_without_demod_ctrl(monkeypatch) -> None:
+    class FakeTransportClient:
+        def __init__(self, on_message, on_connected, on_disconnected, on_error) -> None:
+            return None
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def send_command(self, payload: bytes) -> None:
+            return None
+
+        def is_connected(self) -> bool:
+            return True
+
+    monkeypatch.setattr("ads1278_client.controller.TransportClient", FakeTransportClient)
+
+    controller = ClientController()
+    controller._handle_connected("RP_CAP:ads1278_v3")
+    controller._handle_message(_message(ctrl_raw=0x00000002))
+
+    with pytest.raises(RuntimeError, match="acquisition \\+ demod"):
+        controller.start_logging(
+            "usb_demod",
+            channel_indices=(7,),
+            destination=LogDestination.USB_RED_PITAYA,
+            demod_rate=True,
+        )
+
+
 def test_controller_ignores_stale_capture_marker_ack(monkeypatch, tmp_path) -> None:
     sent_commands = []
 
@@ -621,6 +708,96 @@ def test_main_window_requires_at_least_one_selected_channel(monkeypatch) -> None
         assert window._selected_channel_indices() == (0,)
         assert window._plots[0].isVisible() is True
         assert window._plots[1].isVisible() is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_main_window_passes_demod_rate_only_for_ch8_logging(monkeypatch) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    calls = []
+    snapshot = ControllerSnapshot(
+        connected=True,
+        host="127.0.0.1",
+        port=SERVER_PORT,
+        capability_line="RP_CAP:ads1278_v3",
+        latest_message=_message(ctrl_raw=0x00000006),
+        status_text="Connected",
+        status_level="ok",
+        logging_path="",
+        logging_remaining_s=None,
+        channel_history=_empty_history(),
+        asd_channel_history=_empty_asd_history(),
+        frame_history=_empty_frame_history(),
+    )
+
+    class FakeController:
+        def get_snapshot(self) -> ControllerSnapshot:
+            return snapshot
+
+        def connect(self, host: str, port: int = SERVER_PORT) -> None:
+            return None
+
+        def disconnect(self) -> None:
+            return None
+
+        def set_enabled(self, enabled: bool) -> None:
+            return None
+
+        def trigger_sync(self) -> None:
+            return None
+
+        def set_extclk_div(self, divider: int) -> None:
+            return None
+
+        def set_modulation(self, enabled: bool, frequency_hz: float) -> None:
+            return None
+
+        def set_modulation_frequency(self, frequency_hz: float) -> None:
+            return None
+
+        def start_logging(
+            self,
+            path: str,
+            duration_s: float | None = None,
+            channel_indices=None,
+            *,
+            destination=LogDestination.LOCAL_COMPUTER,
+            local_directory=None,
+            demod_rate: bool = False,
+        ) -> None:
+            calls.append((path, duration_s, channel_indices, destination, local_directory, demod_rate))
+
+        def stop_logging(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+    monkeypatch.setattr("ads1278_client.main_window.ClientController", FakeController)
+
+    window = MainWindow()
+    try:
+        window.csv_destination_combo.setCurrentText("This computer")
+        for idx, checkbox in enumerate(window._channel_checkboxes):
+            checkbox.blockSignals(True)
+            checkbox.setChecked(idx == 7)
+            checkbox.blockSignals(False)
+        window._sync_demod_rate_checkbox()
+
+        assert window.csv_demod_rate_checkbox.isEnabled() is True
+
+        window.csv_demod_rate_checkbox.setChecked(True)
+        window._start_logging()
+
+        assert calls
+        assert calls[-1][2] == (7,)
+        assert calls[-1][-1] is True
+
+        window._channel_checkboxes[0].setChecked(True)
+        window._on_channel_toggled(0, True)
+        assert window.csv_demod_rate_checkbox.isEnabled() is False
+        assert window.csv_demod_rate_checkbox.isChecked() is False
     finally:
         window.close()
         app.processEvents()

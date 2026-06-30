@@ -25,6 +25,7 @@ LOCAL_LOG_DIR_HINT = "/mnt/usb/ads1278/logs"
 LOCAL_LOG_PATH_HINT = f"{LOCAL_LOG_DIR_HINT}/<filename>.csv"
 LOCAL_LOG_DEFAULT_FILENAME_PREFIX = "ads1278"
 MAX_LOCAL_LOG_FILENAME_LEN = 63
+LOCAL_LOG_DEMOD_RATE_FLAG = 0x100
 _LOCAL_LOG_FILENAME_CHUNK_SHIFT = 24
 _LOCAL_LOG_FILENAME_CHUNK_BYTES = 3
 _LOCAL_LOG_FILENAME_SAFE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -191,10 +192,17 @@ def pack_set_local_log_filename(basename: str) -> list[bytes]:
     return commands
 
 
-def pack_start_local_log(channel_indices: Sequence[int] | None = None) -> bytes:
+def pack_start_local_log(
+    channel_indices: Sequence[int] | None = None,
+    *,
+    demod_rate: bool = False,
+) -> bytes:
+    value = channel_indices_to_mask(channel_indices)
+    if demod_rate:
+        value |= LOCAL_LOG_DEMOD_RATE_FLAG
     return pack_command(
         CommandOpcode.START_LOCAL_LOG,
-        channel_indices_to_mask(channel_indices),
+        value,
     )
 
 

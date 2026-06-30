@@ -24,7 +24,7 @@ test: test_cmd_parse test_protocol_layout test_dma_frame_layout test_memory_map 
 	./test_memory_map
 	./test_csv_logger
 
-test_cmd_parse: tests/test_cmd_parse.c cmd_parse.c cmd_parse.h protocol.h
+test_cmd_parse: tests/test_cmd_parse.c cmd_parse.c cmd_parse.h csv_logger.h protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_cmd_parse.c cmd_parse.c
 
 test_protocol_layout: tests/test_protocol_layout.c protocol.h
@@ -36,7 +36,7 @@ test_dma_frame_layout: tests/test_dma_frame_layout.c dma_frame.h
 test_memory_map: tests/test_memory_map.c memory_map.h protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_memory_map.c
 
-test_csv_logger: tests/test_csv_logger.c csv_logger.c csv_logger.h protocol.h
+test_csv_logger: tests/test_csv_logger.c csv_logger.c csv_logger.h memory_map.h protocol.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -o $@ tests/test_csv_logger.c csv_logger.c
 
 clean:

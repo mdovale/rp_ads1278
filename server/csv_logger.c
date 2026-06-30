@@ -1,5 +1,7 @@
 #include "csv_logger.h"
 
+#include "memory_map.h"
+
 #include <errno.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -21,6 +23,90 @@ static uint32_t ads1278_normalize_channel_mask(uint32_t channel_mask)
 static bool ads1278_logger_channel_enabled(uint32_t channel_mask, unsigned int channel)
 {
     return (channel_mask & (1u << channel)) != 0u;
+}
+
+static bool ads1278_ctrl_has_demod_acquisition(uint32_t ctrl_raw)
+{
+    const uint32_t required = ADS1278_CTRL_ENABLE | ADS1278_CTRL_DEMOD_ENABLE;
+
+    return (ctrl_raw & required) == required;
+}
+
+static uint32_t ads1278_frames_per_demod(uint32_t extclk_div, uint32_t mod_div)
+{
+    uint64_t denominator;
+    uint64_t frames;
+
+    if (extclk_div == 0u || mod_div < 2u) {
+        return 1u;
+    }
+
+    denominator = (uint64_t)extclk_div * 512ull;
+    if (denominator == 0u) {
+        return 1u;
+    }
+
+    frames = ((uint64_t)mod_div + (denominator / 2u)) / denominator;
+    if (frames == 0u) {
+        return 1u;
+    }
+    if (frames > UINT32_MAX) {
+        return UINT32_MAX;
+    }
+    return (uint32_t)frames;
+}
+
+static bool ads1278_csv_logger_demod_gate_active(
+    const ads1278_csv_logger *logger,
+    uint32_t ctrl_raw,
+    uint32_t mod_div
+)
+{
+    return logger != NULL
+        && logger->demod_rate_requested
+        && logger->channel_mask == ADS1278_LOCAL_LOG_CH8_ONLY
+        && ads1278_ctrl_has_demod_acquisition(ctrl_raw)
+        && mod_div >= 2u;
+}
+
+static bool ads1278_csv_logger_should_write_row(
+    ads1278_csv_logger *logger,
+    uint32_t frame_cnt,
+    uint32_t ctrl_raw,
+    uint32_t extclk_div,
+    uint32_t mod_div,
+    const int32_t channels[ADS1278_CHANNEL_COUNT]
+)
+{
+    uint32_t frames_per_demod;
+    uint32_t frames_since_last_row;
+    int32_t ch8;
+
+    if (!ads1278_csv_logger_demod_gate_active(logger, ctrl_raw, mod_div)) {
+        logger->have_last_demod_row = false;
+        return true;
+    }
+
+    ch8 = channels[ADS1278_CHANNEL_COUNT - 1u];
+    if (!logger->have_last_demod_row) {
+        logger->last_demod_frame_cnt = frame_cnt;
+        logger->last_demod_ch8 = ch8;
+        logger->have_last_demod_row = true;
+        return true;
+    }
+
+    frames_per_demod = ads1278_frames_per_demod(extclk_div, mod_div);
+    frames_since_last_row = (frame_cnt - logger->last_demod_frame_cnt) & 0xffffu;
+    if (frames_since_last_row == 0u) {
+        return false;
+    }
+    if (ch8 != logger->last_demod_ch8 || frames_since_last_row >= frames_per_demod) {
+        logger->last_demod_frame_cnt = frame_cnt;
+        logger->last_demod_ch8 = ch8;
+        return true;
+    }
+
+    return false;
 }
 
 static int ads1278_mkdir_if_needed(const char *path)
@@ -284,6 +370,9 @@ static int ads1278_csv_logger_write_row(
     if (logger == NULL || !logger->active || logger->file == NULL || channels == NULL) {
         return 0;
     }
+    if (!ads1278_csv_logger_should_write_row(logger, frame_cnt, ctrl_raw, extclk_div, mod_div, channels)) {
+        return 0;
+    }
     if (ads1278_format_utc_timestamp(timestamp, sizeof(timestamp)) != 0) {
         return -1;
     }
@@ -330,10 +419,12 @@ int ads1278_csv_logger_start(
     ads1278_csv_logger *logger,
     const char *directory,
     uint32_t channel_mask,
+    uint32_t ctrl_raw,
     const char *filename
 )
 {
     char resolved_filename[64];
+    bool demod_rate_requested;
 
     if (logger == NULL) {
         errno = EINVAL;
@@ -341,6 +432,11 @@ int ads1278_csv_logger_start(
     }
 
     ads1278_csv_logger_close(logger);
+    demod_rate_requested = (channel_mask & ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG) != 0u;
+    if (demod_rate_requested && !ads1278_ctrl_has_demod_acquisition(ctrl_raw)) {
+        errno = EINVAL;
+        return -1;
+    }
     if (directory == NULL || directory[0] == '\0') {
         directory = ADS1278_LOCAL_LOG_DIR;
     }
@@ -378,6 +474,10 @@ int ads1278_csv_logger_start(
     }
     logger->channel_mask = ads1278_normalize_channel_mask(channel_mask);
     logger->rows_written = 0u;
+    logger->last_demod_frame_cnt = 0u;
+    logger->last_demod_ch8 = 0;
+    logger->demod_rate_requested = demod_rate_requested;
+    logger->have_last_demod_row = false;
     logger->active = true;
     if (ads1278_csv_logger_write_header(logger) != 0) {
         int saved_errno = errno;
@@ -405,6 +505,10 @@ uint32_t ads1278_csv_logger_close(ads1278_csv_logger *logger)
     logger->active = false;
     logger->rows_written = 0u;
     logger->channel_mask = ADS1278_LOCAL_LOG_ALL_CHANNELS;
+    logger->last_demod_frame_cnt = 0u;
+    logger->last_demod_ch8 = 0;
+    logger->demod_rate_requested = false;
+    logger->have_last_demod_row = false;
     logger->path[0] = '\0';
     return rows_written;
 }

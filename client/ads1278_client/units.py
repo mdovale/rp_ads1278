@@ -27,6 +27,13 @@ def sample_rate_hz(extclk_div: int) -> float:
     return 1.0 / sample_period_seconds(extclk_div)
 
 
+def frames_per_demod(extclk_div: int, mod_div: int) -> int:
+    if extclk_div <= 0 or mod_div < 2:
+        return 1
+    denominator = int(extclk_div) * int(ADS1278_CLOCKS_PER_SAMPLE)
+    return max(1, (int(mod_div) + (denominator // 2)) // denominator)
+
+
 def frame_counts_to_relative_seconds(
     frame_counts: np.ndarray,
     extclk_div: int,

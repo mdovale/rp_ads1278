@@ -39,8 +39,10 @@ Current runtime behavior is:
 - `ACK` and `ERROR` update the displayed state immediately and also surface a visible status line that includes the echoed opcode and value.
 - The **Save CSV to** selector chooses between `This computer` and `USB on Red Pitaya`.
 - **CSV filename** sets the basename before capture starts. For local logging, **CSV folder** chooses where the file is written. For USB logging, the server writes that basename under `/mnt/usb/ads1278/logs`.
+- **Demod rate (~MOD Hz)** is available only when CH8 is the sole selected channel. It keeps the existing CSV schema but gates rows to the demod update cadence.
 - Local computer CSV logging writes rows only for in-memory `SAMPLE` messages and includes host timestamp plus server metadata and selected channels. Bulk batches are expanded to `SAMPLE` objects before logging.
-- USB CSV logging sends `SET_LOCAL_LOG_DURATION`, `SET_LOCAL_LOG_FILENAME`, and `START_LOCAL_LOG` after the `MARK_CAPTURE` ACK. The server writes rows to the USB stick and returns the row count when `STOP_LOCAL_LOG` is ACKed.
+- With demod-rate host logging enabled, the logger writes the first CH8 row, CH8 changes, or a row after `max(1, round(mod_div / (extclk_div * 512)))` ADC frames. If demod acquisition is not active in the message snapshot, host logging falls back to full-rate rows.
+- USB CSV logging sends `SET_LOCAL_LOG_DURATION`, `SET_LOCAL_LOG_FILENAME`, and `START_LOCAL_LOG` after the `MARK_CAPTURE` ACK. When demod-rate logging is selected, `START_LOCAL_LOG` sets bit `8`; the controller requires the latest snapshot to have acquisition plus demod enabled (`CTRL & 0x6 == 0x6`) before sending. The server writes rows to the USB stick and returns the row count when `STOP_LOCAL_LOG` is ACKed.
 - CSV logging can run manually until `Stop CSV` or for a positive duration entered as hours, minutes, and seconds. Host-side timed capture is stopped by the client timer; USB timed capture is stopped by the server timer.
 - Host-side logging stops cleanly on manual stop, timed capture expiry, or disconnect. USB timed logging continues after disconnect until the server-side deadline expires; USB manual logging closes on disconnect.
 
@@ -93,8 +95,9 @@ The connection lifecycle is:
 - Set MOD frequency `10 Hz` and confirm the displayed modulation frequency updates to `10.000 Hz`.
 - Clear **MOD enable** and confirm the status line shows `ACK SET_MOD_DIV value=0` and `mod: off`.
 - Start manual CSV logging, re-enable streaming, and confirm the file contains only `SAMPLE` rows with negative values preserved.
+- Select CH8 only, enable **Demod rate (~MOD Hz)**, and confirm local CSV row count tracks the MOD cadence when acquisition plus demod are active.
 - Set a positive CSV duration, start logging, and confirm logging stops automatically after the requested capture window.
-- Select `Save CSV to: USB on Red Pitaya`, start and stop manual CSV logging against `client/tools/fake_server.py`, and confirm the status reports a server row count.
+- Select `Save CSV to: USB on Red Pitaya`, start and stop manual CSV logging against `client/tools/fake_server.py`, and confirm the status reports a server row count. Repeat with CH8-only demod-rate logging after enabling acquisition in the fake server.
 - On hardware, mount a USB stick at `/mnt/usb`, run the server with `--log-dir /mnt/usb/ads1278/logs`, select `Save CSV to: USB on Red Pitaya`, set a short duration, start logging, disconnect the GUI, and confirm the CSV keeps growing until the server deadline.
 
 ## Key files

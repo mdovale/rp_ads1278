@@ -102,7 +102,11 @@ class FakeAds1278Server:
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))
                 continue
 
-            if opcode == CommandOpcode.START_LOCAL_LOG and (value & ~0xFF) == 0:
+            if opcode == CommandOpcode.START_LOCAL_LOG and (value & ~0x1FF) == 0:
+                demod_rate_requested = (value & 0x100) != 0
+                if demod_rate_requested and not self.demod_acquisition_active:
+                    conn.sendall(self.make_message(MessageType.ERROR, opcode, value))
+                    continue
                 conn.sendall(self.make_message(MessageType.ACK, opcode, value))
                 continue
 
@@ -133,7 +137,7 @@ class FakeAds1278Server:
         status_raw = (self.frame_cnt << 16) | 0x1
         if self.frame_cnt and self.frame_cnt % 25 == 0:
             status_raw |= 0x2
-        ctrl_raw = 0x2 if self.enabled else 0x0
+        ctrl_raw = 0x6 if self.demod_acquisition_active else (0x2 if self.enabled else 0x0)
 
         return build_message(
             msg_type,
@@ -146,6 +150,10 @@ class FakeAds1278Server:
             self.mod_div,
             channels,
         )
+
+    @property
+    def demod_acquisition_active(self) -> bool:
+        return self.enabled and self.mod_div >= 2
 
 
 def parse_args() -> argparse.Namespace:

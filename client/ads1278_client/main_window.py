@@ -332,11 +332,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.csv_duration_minutes_input.valueChanged.connect(self._save_csv_duration_parts)
         self.csv_duration_seconds_input.valueChanged.connect(self._save_csv_duration_parts)
 
+        self.csv_demod_rate_checkbox = QtWidgets.QCheckBox("Demod rate (~MOD Hz)")
+        self.csv_demod_rate_checkbox.setChecked(False)
+        self.csv_demod_rate_checkbox.setToolTip(
+            "Log CH8 at the demodulation update rate when acquisition + demod are active."
+        )
+
         self.start_logging_button = QtWidgets.QPushButton("Start CSV")
         self.start_logging_button.clicked.connect(self._start_logging)
 
         self.stop_logging_button = QtWidgets.QPushButton("Stop CSV")
         self.stop_logging_button.clicked.connect(self._controller.stop_logging)
+        self._sync_demod_rate_checkbox()
 
         return self._horizontal_toolbar(
             self._toolbar_row(
@@ -368,6 +375,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.csv_duration_hours_input,
                 self.csv_duration_minutes_input,
                 self.csv_duration_seconds_input,
+                self.csv_demod_rate_checkbox,
                 self.start_logging_button,
                 self.stop_logging_button,
                 "stretch",
@@ -706,6 +714,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     duration_s=duration_s,
                     channel_indices=channel_indices,
                     destination=LogDestination.USB_RED_PITAYA,
+                    demod_rate=self.csv_demod_rate_checkbox.isChecked(),
                 )
             else:
                 self._controller.start_logging(
@@ -714,6 +723,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     channel_indices=channel_indices,
                     destination=LogDestination.LOCAL_COMPUTER,
                     local_directory=self.csv_folder_input.text().strip() or str(Path.cwd()),
+                    demod_rate=self.csv_demod_rate_checkbox.isChecked(),
                 )
         except Exception as exc:
             self._show_status(str(exc), "error")
@@ -857,8 +867,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.csv_duration_hours_input,
             self.csv_duration_minutes_input,
             self.csv_duration_seconds_input,
+            self.csv_demod_rate_checkbox,
         ):
             widget.setEnabled(buttons_enabled)
+        if buttons_enabled:
+            self._sync_demod_rate_checkbox()
 
         divider = self._effective_divider(latest)
         dt = self._sample_period(divider)
@@ -1197,6 +1210,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._save_channel_selection()
         self._apply_plot_visibility()
+        self._sync_demod_rate_checkbox()
+
+    def _sync_demod_rate_checkbox(self) -> None:
+        if not hasattr(self, "csv_demod_rate_checkbox"):
+            return
+        enabled = self._selected_channel_indices() == (CHANNEL_COUNT - 1,)
+        self.csv_demod_rate_checkbox.setEnabled(enabled)
+        if not enabled:
+            self.csv_demod_rate_checkbox.setChecked(False)
 
     def _load_plot_layout(self) -> str:
         layout = self._settings.value("plot_layout", PLOT_LAYOUT_SEPARATE, type=str)

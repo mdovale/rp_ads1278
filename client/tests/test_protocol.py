@@ -5,6 +5,7 @@ import pytest
 from ads1278_client.models import CommandOpcode, MessageType
 from ads1278_client.protocol import (
     CAPABILITY_LINE,
+    LOCAL_LOG_DEMOD_RATE_FLAG,
     CapabilityLineBuffer,
     MessageStreamBuffer,
     MIN_EXTCLK_DIV,
@@ -177,6 +178,13 @@ def test_command_packers_match_server_layout() -> None:
     )
     assert local_log_opcode == CommandOpcode.START_LOCAL_LOG
     assert local_log_value == 0x91
+
+    demod_log_opcode, demod_log_value = struct.unpack(
+        "<II",
+        pack_start_local_log((7,), demod_rate=True),
+    )
+    assert demod_log_opcode == CommandOpcode.START_LOCAL_LOG
+    assert demod_log_value == 0x80 | LOCAL_LOG_DEMOD_RATE_FLAG
 
     duration_opcode, duration_value = struct.unpack(
         "<II",

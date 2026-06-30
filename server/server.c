@@ -857,10 +857,12 @@ static int ads1278_apply_command(
         }
         break;
     case ADS1278_OPCODE_START_LOCAL_LOG:
+        ads1278_refresh_control_fields(state);
         if (ads1278_csv_logger_start(
                 &state->local_logger,
                 options != NULL ? options->local_log_dir : ADS1278_LOCAL_LOG_DIR,
                 command->value,
+                state->snapshot.ctrl_raw,
                 state->pending_local_log_filename_valid
                     ? state->pending_local_log_filename
                     : NULL
