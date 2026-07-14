@@ -18,6 +18,7 @@ from .protocol import (
     SERVER_PORT,
     normalize_csv_basename,
     pack_mark_capture,
+    pack_set_demod_enable,
     pack_set_enable,
     pack_set_extclk_div,
     pack_set_modulation_div,
@@ -151,6 +152,9 @@ class ClientController:
     def set_enabled(self, enabled: bool) -> None:
         self._transport.send_command(pack_set_enable(enabled))
 
+    def set_demod_enabled(self, enabled: bool) -> None:
+        self._transport.send_command(pack_set_demod_enable(enabled))
+
     def trigger_sync(self) -> None:
         self._transport.send_command(pack_trigger_sync())
 
@@ -197,8 +201,8 @@ class ClientController:
             logging_path = usb_csv_path_hint(normalized_filename)
         duration = self._normalize_logging_duration(duration_s)
         indices = self._normalize_channel_indices(channel_indices)
-        if demod_rate and indices != (CHANNEL_COUNT - 1,):
-            raise ValueError("demod-rate CSV logging requires CH8 only")
+        if demod_rate and indices != (0,):
+            raise ValueError("demod-rate CSV logging requires CH1 only")
         with self._lock:
             if not self._connected:
                 raise RuntimeError("must be connected before starting CSV capture")

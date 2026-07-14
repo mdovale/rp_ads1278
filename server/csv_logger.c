@@ -64,7 +64,7 @@ static bool ads1278_csv_logger_demod_gate_active(
 {
     return logger != NULL
         && logger->demod_rate_requested
-        && logger->channel_mask == ADS1278_LOCAL_LOG_CH8_ONLY
+        && logger->channel_mask == ADS1278_LOCAL_LOG_CH1_ONLY
         && ads1278_ctrl_has_demod_acquisition(ctrl_raw)
         && mod_div >= 2u;
 }
@@ -80,17 +80,17 @@ static bool ads1278_csv_logger_should_write_row(
 {
     uint32_t frames_per_demod;
     uint32_t frames_since_last_row;
-    int32_t ch8;
+    int32_t ch1;
 
     if (!ads1278_csv_logger_demod_gate_active(logger, ctrl_raw, mod_div)) {
         logger->have_last_demod_row = false;
         return true;
     }
 
-    ch8 = channels[ADS1278_CHANNEL_COUNT - 1u];
+    ch1 = channels[0];
     if (!logger->have_last_demod_row) {
         logger->last_demod_frame_cnt = frame_cnt;
-        logger->last_demod_ch8 = ch8;
+        logger->last_demod_ch1 = ch1;
         logger->have_last_demod_row = true;
         return true;
     }
@@ -100,9 +100,9 @@ static bool ads1278_csv_logger_should_write_row(
     if (frames_since_last_row == 0u) {
         return false;
     }
-    if (ch8 != logger->last_demod_ch8 || frames_since_last_row >= frames_per_demod) {
+    if (ch1 != logger->last_demod_ch1 || frames_since_last_row >= frames_per_demod) {
         logger->last_demod_frame_cnt = frame_cnt;
-        logger->last_demod_ch8 = ch8;
+        logger->last_demod_ch1 = ch1;
         return true;
     }
 
@@ -475,7 +475,7 @@ int ads1278_csv_logger_start(
     logger->channel_mask = ads1278_normalize_channel_mask(channel_mask);
     logger->rows_written = 0u;
     logger->last_demod_frame_cnt = 0u;
-    logger->last_demod_ch8 = 0;
+    logger->last_demod_ch1 = 0;
     logger->demod_rate_requested = demod_rate_requested;
     logger->have_last_demod_row = false;
     logger->active = true;
@@ -506,7 +506,7 @@ uint32_t ads1278_csv_logger_close(ads1278_csv_logger *logger)
     logger->rows_written = 0u;
     logger->channel_mask = ADS1278_LOCAL_LOG_ALL_CHANNELS;
     logger->last_demod_frame_cnt = 0u;
-    logger->last_demod_ch8 = 0;
+    logger->last_demod_ch1 = 0;
     logger->demod_rate_requested = false;
     logger->have_last_demod_row = false;
     logger->path[0] = '\0';

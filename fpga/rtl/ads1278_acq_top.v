@@ -47,7 +47,7 @@ localparam integer DMA_FIFO_LEVEL_W = $clog2(DMA_FIFO_DEPTH + 1);
 // Internal 24-bit channel data from SPI TDM
 wire [23:0] spi_ch0, spi_ch1, spi_ch2, spi_ch3;
 wire [23:0] spi_ch4, spi_ch5, spi_ch6, spi_ch7;
-wire [23:0] spi_ch7_effective;
+wire [23:0] spi_ch0_effective;
 wire        spi_new_data;
 wire [15:0] spi_frame_cnt;
 wire        spi_overflow;
@@ -65,14 +65,14 @@ wire        fifo_push;
 reg  [31:0] fifo_drop_count_reg;
 
 // Zero-extend 24-bit data to 32-bit registers
-assign ch_data_0 = {8'd0, spi_ch0};
+assign ch_data_0 = {8'd0, spi_ch0_effective};
 assign ch_data_1 = {8'd0, spi_ch1};
 assign ch_data_2 = {8'd0, spi_ch2};
 assign ch_data_3 = {8'd0, spi_ch3};
 assign ch_data_4 = {8'd0, spi_ch4};
 assign ch_data_5 = {8'd0, spi_ch5};
 assign ch_data_6 = {8'd0, spi_ch6};
-assign ch_data_7 = {8'd0, spi_ch7_effective};
+assign ch_data_7 = {8'd0, spi_ch7};
 
 assign dma_status_raw = {spi_frame_cnt, 14'd0, spi_overflow, spi_new_data};
 assign status = dma_status_raw;
@@ -88,17 +88,17 @@ assign dma_fifo_empty = fifo_empty_raw;
 assign fifo_frame_in = {
     {16'd0, spi_frame_cnt},
     dma_status_raw,
-    {{8{spi_ch0[23]}}, spi_ch0},
+    {{8{spi_ch0_effective[23]}}, spi_ch0_effective},
     {{8{spi_ch1[23]}}, spi_ch1},
     {{8{spi_ch2[23]}}, spi_ch2},
     {{8{spi_ch3[23]}}, spi_ch3},
     {{8{spi_ch4[23]}}, spi_ch4},
     {{8{spi_ch5[23]}}, spi_ch5},
     {{8{spi_ch6[23]}}, spi_ch6},
-    {{8{spi_ch7_effective[23]}}, spi_ch7_effective}
+    {{8{spi_ch7[23]}}, spi_ch7}
 };
 
-assign spi_ch7_effective = demod_enable ? demod_ch1[23:0] : spi_ch7;
+assign spi_ch0_effective = demod_enable ? demod_ch1[23:0] : spi_ch0;
 
 ads1278_demod u_demod_ch1 (
     .clk       (clk),

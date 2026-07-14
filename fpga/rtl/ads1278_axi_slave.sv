@@ -3,7 +3,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 // AXI4-Lite slave for ADS1278 acquisition.
 // Register map (byte offsets from the assigned AXI base):
-//   0x00  CH1       R    24-bit channel 1 data  (bits [23:0])
+//   0x00  CH1       R    24-bit channel 1 data, or CH1 demod output when CTRL[2] is set
 //   0x04  CH2       R    24-bit channel 2 data
 //   0x08  CH3       R    24-bit channel 3 data
 //   0x0C  CH4       R    24-bit channel 4 data

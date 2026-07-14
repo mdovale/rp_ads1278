@@ -99,6 +99,21 @@ static void test_modulation_divider_validation(void)
     assert(ads1278_command_validate(&command) == ADS1278_CMD_ERR_INVALID_MOD_DIV);
 }
 
+static void test_demod_enable_validation(void)
+{
+    ads1278_command command;
+
+    command.opcode = ADS1278_OPCODE_SET_DEMOD_ENABLE;
+    command.value = 0u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+
+    command.value = 1u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
+
+    command.value = 2u;
+    assert(ads1278_command_validate(&command) == ADS1278_CMD_ERR_INVALID_DEMOD_ENABLE_VALUE);
+}
+
 static void test_local_log_commands_validation(void)
 {
     ads1278_command command;
@@ -115,7 +130,7 @@ static void test_local_log_commands_validation(void)
     command.value = 0xffu;
     assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
 
-    command.value = ADS1278_LOCAL_LOG_CH8_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG;
+    command.value = ADS1278_LOCAL_LOG_CH1_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG;
     assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
 
     command.value = 0x200u;
@@ -134,6 +149,7 @@ int main(void)
     test_invalid_divider_rejection();
     test_mark_capture_acceptance();
     test_modulation_divider_validation();
+    test_demod_enable_validation();
     test_local_log_commands_validation();
     return 0;
 }

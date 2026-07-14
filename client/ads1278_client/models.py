@@ -15,6 +15,7 @@ class CommandOpcode(IntEnum):
     STOP_LOCAL_LOG = 7
     SET_LOCAL_LOG_DURATION = 8
     SET_LOCAL_LOG_FILENAME = 9
+    SET_DEMOD_ENABLE = 10
 
 
 class MessageType(IntEnum):
@@ -51,6 +52,10 @@ class Ads1278Message:
     @property
     def enabled(self) -> bool:
         return bool(self.ctrl_raw & 0x2)
+
+    @property
+    def demod_enabled(self) -> bool:
+        return bool(self.ctrl_raw & 0x4)
 
     @property
     def message_type(self) -> MessageType | None:

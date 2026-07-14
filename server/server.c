@@ -752,9 +752,18 @@ static uint32_t ads1278_build_enable_ctrl(uint32_t ctrl_raw, uint32_t enable_val
     return next_ctrl;
 }
 
+static uint32_t ads1278_build_demod_ctrl(uint32_t ctrl_raw, uint32_t demod_value)
+{
+    uint32_t next_ctrl;
+
+    next_ctrl = ctrl_raw & ~ADS1278_CTRL_DEMOD_ENABLE;
+    next_ctrl |= (demod_value << 2);
+    return next_ctrl;
+}
+
 static uint32_t ads1278_build_sync_ctrl(uint32_t ctrl_raw)
 {
-    return (ctrl_raw & ADS1278_CTRL_ENABLE) | ADS1278_CTRL_SYNC_TRIGGER;
+    return ctrl_raw | ADS1278_CTRL_SYNC_TRIGGER;
 }
 
 static void ads1278_clear_pending_local_log_filename(ads1278_server_state *state)
@@ -825,13 +834,23 @@ static int ads1278_apply_command(
 {
     switch (command->opcode) {
     case ADS1278_OPCODE_SET_ENABLE:
+        ads1278_refresh_control_fields(state);
         ads1278_mmio_write32(
             &state->mmio,
             ADS1278_REG_CTRL,
             ads1278_build_enable_ctrl(state->snapshot.ctrl_raw, command->value)
         );
         break;
+    case ADS1278_OPCODE_SET_DEMOD_ENABLE:
+        ads1278_refresh_control_fields(state);
+        ads1278_mmio_write32(
+            &state->mmio,
+            ADS1278_REG_CTRL,
+            ads1278_build_demod_ctrl(state->snapshot.ctrl_raw, command->value)
+        );
+        break;
     case ADS1278_OPCODE_TRIGGER_SYNC:
+        ads1278_refresh_control_fields(state);
         ads1278_mmio_write32(
             &state->mmio,
             ADS1278_REG_CTRL,

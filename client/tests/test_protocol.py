@@ -16,6 +16,7 @@ from ads1278_client.protocol import (
     modulation_frequency_to_divider,
     normalize_csv_basename,
     pack_mark_capture,
+    pack_set_demod_enable,
     pack_set_enable,
     pack_set_extclk_div,
     pack_set_modulation_div,
@@ -152,6 +153,10 @@ def test_command_packers_match_server_layout() -> None:
     assert enable_opcode == CommandOpcode.SET_ENABLE
     assert enable_value == 1
 
+    demod_opcode, demod_value = struct.unpack("<II", pack_set_demod_enable(True))
+    assert demod_opcode == CommandOpcode.SET_DEMOD_ENABLE
+    assert demod_value == 1
+
     sync_opcode, sync_value = struct.unpack("<II", pack_trigger_sync())
     assert sync_opcode == CommandOpcode.TRIGGER_SYNC
     assert sync_value == 0
@@ -181,10 +186,10 @@ def test_command_packers_match_server_layout() -> None:
 
     demod_log_opcode, demod_log_value = struct.unpack(
         "<II",
-        pack_start_local_log((7,), demod_rate=True),
+        pack_start_local_log((0,), demod_rate=True),
     )
     assert demod_log_opcode == CommandOpcode.START_LOCAL_LOG
-    assert demod_log_value == 0x80 | LOCAL_LOG_DEMOD_RATE_FLAG
+    assert demod_log_value == 0x1 | LOCAL_LOG_DEMOD_RATE_FLAG
 
     duration_opcode, duration_value = struct.unpack(
         "<II",

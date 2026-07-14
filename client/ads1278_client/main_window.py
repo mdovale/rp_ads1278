@@ -94,6 +94,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_asd_request_monotonic = 0.0
         self._mod_enable_user_value = True
         self._mod_settings_dirty = False
+        self._demod_settings_dirty = False
         self._divider_settings_dirty = False
 
         self.setWindowTitle("rp_ads1278 Client")
@@ -266,6 +267,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.set_modulation_button = QtWidgets.QPushButton("Set MOD")
         self.set_modulation_button.clicked.connect(self._send_modulation_command)
 
+        self.demod_enable_checkbox = QtWidgets.QCheckBox("Demod CH1")
+        self.demod_enable_checkbox.setToolTip(
+            "Show the FPGA demodulated CH1 output on CH1. CH8 remains raw."
+        )
+        self.demod_enable_checkbox.setChecked(False)
+        self.demod_enable_checkbox.toggled.connect(self._on_demod_enable_toggled)
+
         self.csv_destination_combo = QtWidgets.QComboBox()
         self.csv_destination_combo.addItems([CSV_DESTINATION_LOCAL, CSV_DESTINATION_USB])
         saved_destination = self._settings.value(
@@ -335,7 +343,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.csv_demod_rate_checkbox = QtWidgets.QCheckBox("Demod rate (~MOD Hz)")
         self.csv_demod_rate_checkbox.setChecked(False)
         self.csv_demod_rate_checkbox.setToolTip(
-            "Log CH8 at the demodulation update rate when acquisition + demod are active."
+            "Log CH1 at the demodulation update rate when acquisition + demod are active."
         )
 
         self.start_logging_button = QtWidgets.QPushButton("Start CSV")
@@ -359,6 +367,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QLabel("MOD freq"),
                 self.modulation_frequency_input,
                 self.set_modulation_button,
+                16,
+                self.demod_enable_checkbox,
                 "stretch",
             ),
             self._toolbar_row(
@@ -641,6 +651,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.setValue("last_host", host)
         self._settings.setValue("last_port", port)
         self._mod_settings_dirty = False
+        self._demod_settings_dirty = False
         self._divider_settings_dirty = False
 
     def _on_divider_value_changed(self, _value: int) -> None:
@@ -673,6 +684,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.modulation_frequency_input.value(),
         )
 
+    def _on_demod_enable_toggled(self, enabled: bool) -> None:
+        self._demod_settings_dirty = True
+        if self._controller.get_snapshot().connected:
+            self._send_command(self._controller.set_demod_enabled, enabled)
+
     def _server_mod_matches_controls(self, mod_div: int) -> bool:
         enabled = mod_div != 0
         if enabled != self._mod_enable_user_value:
@@ -693,6 +709,17 @@ class MainWindow(QtWidgets.QMainWindow):
         checkbox.setChecked(enabled)
         checkbox.blockSignals(False)
         self.modulation_frequency_input.setEnabled(enabled)
+
+    def _server_demod_matches_controls(self, enabled: bool) -> bool:
+        return self.demod_enable_checkbox.isChecked() == enabled
+
+    def _sync_demod_enable_checkbox_from_server(self, enabled: bool) -> None:
+        checkbox = self.demod_enable_checkbox
+        if checkbox.isChecked() == enabled:
+            return
+        checkbox.blockSignals(True)
+        checkbox.setChecked(enabled)
+        checkbox.blockSignals(False)
 
     def _send_command(self, fn, *args) -> None:
         try:
@@ -834,6 +861,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     and not self.modulation_frequency_input.hasFocus()
                 ):
                     self.modulation_frequency_input.setValue(modulation_frequency_hz)
+            if self._server_demod_matches_controls(latest.demod_enabled):
+                self._demod_settings_dirty = False
+            if snapshot.connected and not self._demod_settings_dirty:
+                self._sync_demod_enable_checkbox_from_server(latest.demod_enabled)
 
         self.capability_label.setText(
             f"capability: {snapshot.capability_line or '-'}"
@@ -858,6 +889,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.sync_button,
             self.set_divider_button,
             self.set_modulation_button,
+            self.demod_enable_checkbox,
             self.start_logging_button,
             self.stop_logging_button,
             self.csv_destination_combo,
@@ -1215,7 +1247,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _sync_demod_rate_checkbox(self) -> None:
         if not hasattr(self, "csv_demod_rate_checkbox"):
             return
-        enabled = self._selected_channel_indices() == (CHANNEL_COUNT - 1,)
+        enabled = self._selected_channel_indices() == (0,)
         self.csv_demod_rate_checkbox.setEnabled(enabled)
         if not enabled:
             self.csv_demod_rate_checkbox.setChecked(False)

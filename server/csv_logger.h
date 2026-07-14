@@ -15,7 +15,7 @@
 #define ADS1278_LOCAL_LOG_CHANNEL_MASK 0xffu
 #define ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG 0x100u
 #define ADS1278_LOCAL_LOG_VALUE_MASK (ADS1278_LOCAL_LOG_CHANNEL_MASK | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG)
-#define ADS1278_LOCAL_LOG_CH8_ONLY (1u << 7)
+#define ADS1278_LOCAL_LOG_CH1_ONLY (1u << 0)
 
 typedef struct {
     FILE *file;
@@ -23,7 +23,7 @@ typedef struct {
     uint32_t rows_written;
     uint32_t channel_mask;
     uint32_t last_demod_frame_cnt;
-    int32_t last_demod_ch8;
+    int32_t last_demod_ch1;
     bool active;
     bool demod_rate_requested;
     bool have_last_demod_row;

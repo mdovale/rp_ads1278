@@ -109,6 +109,10 @@ def pack_set_enable(enabled: bool) -> bytes:
     return pack_command(CommandOpcode.SET_ENABLE, 1 if enabled else 0)
 
 
+def pack_set_demod_enable(enabled: bool) -> bytes:
+    return pack_command(CommandOpcode.SET_DEMOD_ENABLE, 1 if enabled else 0)
+
+
 def pack_trigger_sync() -> bytes:
     return pack_command(CommandOpcode.TRIGGER_SYNC, 0)
 

@@ -60,6 +60,11 @@ ads1278_cmd_validation_result ads1278_command_validate(const ads1278_command *co
             return ADS1278_CMD_VALID;
         }
         return ADS1278_CMD_ERR_INVALID_ENABLE_VALUE;
+    case ADS1278_OPCODE_SET_DEMOD_ENABLE:
+        if (command->value == 0u || command->value == 1u) {
+            return ADS1278_CMD_VALID;
+        }
+        return ADS1278_CMD_ERR_INVALID_DEMOD_ENABLE_VALUE;
     case ADS1278_OPCODE_TRIGGER_SYNC:
     case ADS1278_OPCODE_MARK_CAPTURE:
     case ADS1278_OPCODE_STOP_LOCAL_LOG:
@@ -99,6 +104,8 @@ const char *ads1278_cmd_validation_result_string(ads1278_cmd_validation_result r
         return "SET_EXTCLK_DIV requires value >= 3";
     case ADS1278_CMD_ERR_INVALID_MOD_DIV:
         return "SET_MOD_DIV requires value 0 or >= 2";
+    case ADS1278_CMD_ERR_INVALID_DEMOD_ENABLE_VALUE:
+        return "SET_DEMOD_ENABLE requires value 0 or 1";
     case ADS1278_CMD_ERR_INVALID_LOCAL_LOG_MASK:
         return "START_LOCAL_LOG value must use channel bits 0..7 and optional bit 8";
     default:

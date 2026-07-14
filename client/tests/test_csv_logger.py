@@ -14,6 +14,7 @@ def _sample_message(
     ctrl_raw: int = 0x00000006,
     extclk_div: int = 1,
     mod_div: int = 5120,
+    ch1: int = 1,
     ch8: int = -8,
 ):
     return parse_message(
@@ -26,7 +27,7 @@ def _sample_message(
             ctrl_raw,
             extclk_div,
             mod_div,
-            [1, -2, 3, -4, 5, -6, 7, ch8],
+            [ch1, -2, 3, -4, 5, -6, 7, ch8],
         )
     )
 
@@ -91,8 +92,8 @@ def test_csv_logger_rejects_empty_channel_selection(tmp_path) -> None:
         SampleCsvLogger(tmp_path / "empty.csv", channel_indices=())
 
 
-def test_csv_logger_rejects_demod_rate_without_ch8_only(tmp_path) -> None:
-    with pytest.raises(ValueError, match="CH8 only"):
+def test_csv_logger_rejects_demod_rate_without_ch1_only(tmp_path) -> None:
+    with pytest.raises(ValueError, match="CH1 only"):
         SampleCsvLogger(
             tmp_path / "bad_demod.csv",
             channel_indices=(0, 7),
@@ -100,13 +101,13 @@ def test_csv_logger_rejects_demod_rate_without_ch8_only(tmp_path) -> None:
         )
 
 
-def test_csv_logger_demod_rate_skips_duplicate_ch8_frames(tmp_path) -> None:
+def test_csv_logger_demod_rate_skips_duplicate_ch1_frames(tmp_path) -> None:
     path = tmp_path / "demod.csv"
 
-    logger = SampleCsvLogger(path, channel_indices=(7,), demod_rate=True)
+    logger = SampleCsvLogger(path, channel_indices=(0,), demod_rate=True)
     for frame_cnt in range(1, 12):
-        logger.write_sample(_sample_message(msg_seq=frame_cnt, frame_cnt=frame_cnt, ch8=1234))
-    logger.write_sample(_sample_message(msg_seq=12, frame_cnt=11, ch8=1235))
+        logger.write_sample(_sample_message(msg_seq=frame_cnt, frame_cnt=frame_cnt, ch1=1234))
+    logger.write_sample(_sample_message(msg_seq=12, frame_cnt=11, ch1=1235))
     logger.close()
 
     with path.open("r", newline="", encoding="utf-8") as handle:
@@ -115,12 +116,12 @@ def test_csv_logger_demod_rate_skips_duplicate_ch8_frames(tmp_path) -> None:
     assert [row[1] for row in rows[1:]] == ["1", "11"]
 
 
-def test_csv_logger_demod_rate_writes_changed_ch8(tmp_path) -> None:
+def test_csv_logger_demod_rate_writes_changed_ch1(tmp_path) -> None:
     path = tmp_path / "demod_changed.csv"
 
-    logger = SampleCsvLogger(path, channel_indices=(7,), demod_rate=True)
-    logger.write_sample(_sample_message(msg_seq=1, frame_cnt=1, ch8=1234))
-    logger.write_sample(_sample_message(msg_seq=2, frame_cnt=2, ch8=1235))
+    logger = SampleCsvLogger(path, channel_indices=(0,), demod_rate=True)
+    logger.write_sample(_sample_message(msg_seq=1, frame_cnt=1, ch1=1234))
+    logger.write_sample(_sample_message(msg_seq=2, frame_cnt=2, ch1=1235))
     logger.close()
 
     with path.open("r", newline="", encoding="utf-8") as handle:
@@ -132,14 +133,14 @@ def test_csv_logger_demod_rate_writes_changed_ch8(tmp_path) -> None:
 def test_csv_logger_demod_rate_falls_back_to_full_rate_without_demod_ctrl(tmp_path) -> None:
     path = tmp_path / "demod_full_rate.csv"
 
-    logger = SampleCsvLogger(path, channel_indices=(7,), demod_rate=True)
+    logger = SampleCsvLogger(path, channel_indices=(0,), demod_rate=True)
     for frame_cnt in range(1, 4):
         logger.write_sample(
             _sample_message(
                 msg_seq=frame_cnt,
                 frame_cnt=frame_cnt,
                 ctrl_raw=0x00000002,
-                ch8=1234,
+                ch1=1234,
             )
         )
     logger.close()
