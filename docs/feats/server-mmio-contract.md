@@ -21,18 +21,18 @@ Current server-visible register map:
 | Offset | Name | Access | Server-visible meaning |
 |------|------|------|------|
 | `0x00` | `CH1` | R | Channel 1 sample, or CH1 demod output when `CTRL[2]` is set |
-| `0x04` | `CH2` | R | Channel 2 sample |
-| `0x08` | `CH3` | R | Channel 3 sample |
-| `0x0C` | `CH4` | R | Channel 4 sample |
-| `0x10` | `CH5` | R | Channel 5 sample |
-| `0x14` | `CH6` | R | Channel 6 sample |
-| `0x18` | `CH7` | R | Channel 7 sample |
-| `0x1C` | `CH8` | R | Channel 8 sample |
+| `0x04` | `CH2` | R | Channel 2 sample, or CH2 demod output when `CTRL[2]` is set |
+| `0x08` | `CH3` | R | Channel 3 sample, or CH3 demod output when `CTRL[2]` is set |
+| `0x0C` | `CH4` | R | Channel 4 sample, or CH4 demod output when `CTRL[2]` is set |
+| `0x10` | `CH5` | R | Channel 5 sample, or CH5 demod output when `CTRL[2]` is set |
+| `0x14` | `CH6` | R | Channel 6 sample, or CH6 demod output when `CTRL[2]` is set |
+| `0x18` | `CH7` | R | Channel 7 sample, or CH7 demod output when `CTRL[2]` is set |
+| `0x1C` | `CH8` | R | Channel 8 sample, or CH8 demod output when `CTRL[2]` is set |
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
 | `0x24` | `CTRL` | R/W | Bit `0` = one-shot `SYNC` trigger, bit `1` = acquisition enable, bit `2` = demod enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared divider value used by current FPGA clocking logic |
 | `0x5C` | `MOD_DIV` | R/W | `0` holds MOD high; `>= 2` is the modulation square-wave half-period divider |
-| `0x6C` | `DEMOD_SKIP` | R/W | Bits `[15:0]` = ADC samples skipped after every MOD edge before CH1 enters the demod average |
+| `0x6C` | `DEMOD_SKIP` | R/W | Bits `[15:0]` = ADC samples skipped after every MOD edge before each channel enters its demod average |
 
 Phase 1 freeze for DMA bring-up:
 
@@ -63,12 +63,12 @@ Current behavior a server can rely on:
 - `CTRL` resets to `0`, so acquisition starts disabled after reset.
 - `EXTCLK_DIV` resets to `625` (`0x271`).
 - `MOD_DIV` resets to `6,250,000`, which generates a nominal `10 Hz` square wave. Writing `0` disables toggling and holds MOD high.
-- `DEMOD_SKIP` resets to `0`, so demod includes every CH1 sample by default. Non-zero values skip the first N ADC samples after each MOD edge before accumulating the positive or negative half-cycle average.
+- `DEMOD_SKIP` resets to `0`, so demod includes every sample by default. Non-zero values skip the first N ADC samples after each MOD edge before each channel accumulates the positive or negative half-cycle average.
 - Channel registers update together after a complete 192-bit TDM frame is captured.
 - `frame_cnt` increments once per latched frame and resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
 - Writing `CTRL[1] = 1` enables both acquisition and the current EXTCLK generator.
-- Writing `CTRL[2] = 1` replaces CH1 with the held half-cycle demod output computed from raw CH1. Clearing it restores raw CH1. CH8 remains raw in both states.
+- Writing `CTRL[2] = 1` replaces each channel with the held half-cycle demod output computed from that channel's own raw input. Clearing it restores raw output on every channel.
 - Writing `CTRL[0] = 1` triggers a one-shot `SYNC` pulse and the bit auto-clears in hardware.
 
 Current behavior a server must account for carefully:

@@ -22,7 +22,7 @@ Current behavior that software or bring-up code can observe:
 - `DOUT1` is sampled on SCLK rising edges.
 - One complete frame is 8 channels x 24 bits = 192 bits.
 - The latched channel ordering is CH1 through CH8.
-- If `CTRL[2]` is set, CH1 carries the held half-cycle demod output computed from raw CH1 and `mod_o`; CH8 remains raw.
+- If `CTRL[2]` is set, each channel carries the held half-cycle demod output computed from that channel's own raw ADC input and `mod_o`. The FPGA keeps per-channel accumulators and uses one shared iterative divider, so updates may appear a few hundred 125 MHz clock cycles after the MOD-edge frame.
 - The output channel words are zero-extended to 32 bits before they reach the register map.
 - `STATUS[0]` pulses high for one acquisition clock cycle when a frame is latched.
 - `STATUS[1]` becomes sticky if a new `DRDY` falling edge arrives while the pipeline is still waiting or shifting.
@@ -39,10 +39,10 @@ The current `SYNC` path is separate from the SPI capture state machine:
 
 ## Architecture
 
-The acquisition path is owned by `ads1278_acq_top`, which wraps four RTL blocks:
+The acquisition path is owned by `ads1278_acq_top`, which wraps these RTL blocks:
 
 - `ads1278_spi_tdm`: waits for `DRDY`, drives `SCLK`, shifts in 192 bits, latches channels, and reports `new_data`, `frame_cnt`, and `overflow`.
-- `ads1278_demod`: averages raw CH1 samples by `mod_o` half-cycle and can replace CH1 with `(avg_pos - avg_neg) / 2`.
+- `ads1278_demod_bank`: averages raw samples by `mod_o` half-cycle for all eight channels, keeping per-channel sums/counts and sharing one `ads1278_demod_divider` for the final average math.
 - `ads1278_frame_fifo`: queues fixed-size DMA frame records behind the capture path during staged DMA bring-up.
 - `ads1278_extclk_gen`: generates the ADC external clock from the 125 MHz system clock.
 - `ads1278_sync_pulse`: generates a one-shot active-low `SYNC` pulse.
@@ -58,7 +58,7 @@ The acquisition path is owned by `ads1278_acq_top`, which wraps four RTL blocks:
 The wrapper also defines the current software-visible packing:
 
 - each 24-bit channel sample is zero-extended to 32 bits
-- when `CTRL[2]` is set, CH1 is the held demod value instead of raw ADC1
+- when `CTRL[2]` is set, every channel is its own held demod value instead of its raw ADC sample
 - `status = {frame_cnt, 14'd0, overflow, new_data}`
 - queued FIFO records use the Phase 2 layout: `frame_count`, `status_raw`, and eight sign-extended 32-bit channels
 
@@ -113,6 +113,7 @@ Reset and disable behavior:
 - `new_data` is a pulse, not a sticky "data available" flag, so software polling can miss completed frames.
 - The divider value used for EXTCLK is also reused for SPI capture timing, which may not remain the final contract.
 - Channel words are zero-extended rather than sign-extended, so software must reinterpret the 24-bit payload correctly.
+- Shared demod division is expected to complete well before the next MOD edge at supported operating points; unusually fast MOD settings should be validated against the divider batch latency.
 - `overflow` only records that overlap happened at least once; it does not count how many frames were missed by the SPI engine.
 - In DMA capture mode (`DMA_CTRL` mode `1`), the staged FIFO is consumed by the HP0 writer. If DMA cannot keep up, `FIFO_DROPS` still increments.
 - `SYNC` is generated independently of the enable bit, which may or may not match the intended operational model.
@@ -122,6 +123,8 @@ Reset and disable behavior:
 | Area | File |
 |------|------|
 | Acquisition wrapper | `fpga/rtl/ads1278_acq_top.v` |
+| Shared demod bank | `fpga/rtl/ads1278_demod_bank.v` |
+| Shared demod divider | `fpga/rtl/ads1278_demod_divider.v` |
 | Staged DMA FIFO | `fpga/rtl/ads1278_frame_fifo.v` |
 | SPI capture state machine | `fpga/rtl/ads1278_spi_tdm.v` |
 | EXTCLK generation | `fpga/rtl/ads1278_extclk_gen.v` |

@@ -25,6 +25,8 @@ class FakeAds1278Server:
         self.extclk_div = 625
         self.mod_div = 6_250_000
         self.phase = 0.0
+        self._last_demod_frame_cnt = 0
+        self._last_demod_channels = [0] * 8
 
     def serve(self, host: str, port: int) -> None:
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -140,6 +142,16 @@ class FakeAds1278Server:
             channels.append(sample)
         self.phase += 0.15
 
+        if self.demod_acquisition_active:
+            frames_since_last = (self.frame_cnt - self._last_demod_frame_cnt) & 0xFFFF
+            if frames_since_last == 0 or frames_since_last >= self.frames_per_demod:
+                self._last_demod_frame_cnt = self.frame_cnt
+                self._last_demod_channels = list(channels)
+            channels = list(self._last_demod_channels)
+        else:
+            self._last_demod_frame_cnt = self.frame_cnt
+            self._last_demod_channels = list(channels)
+
         status_raw = (self.frame_cnt << 16) | 0x1
         if self.frame_cnt and self.frame_cnt % 25 == 0:
             status_raw |= 0x2
@@ -160,6 +172,13 @@ class FakeAds1278Server:
     @property
     def demod_acquisition_active(self) -> bool:
         return self.enabled and self.demod_enabled and self.mod_div >= 2
+
+    @property
+    def frames_per_demod(self) -> int:
+        if self.extclk_div <= 0 or self.mod_div < 2:
+            return 1
+        denominator = self.extclk_div * 512
+        return max(1, (self.mod_div + (denominator // 2)) // denominator)
 
 
 def parse_args() -> argparse.Namespace:

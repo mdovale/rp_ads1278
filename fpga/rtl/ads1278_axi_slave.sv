@@ -4,13 +4,13 @@
 // AXI4-Lite slave for ADS1278 acquisition.
 // Register map (byte offsets from the assigned AXI base):
 //   0x00  CH1       R    24-bit channel 1 data, or CH1 demod output when CTRL[2] is set
-//   0x04  CH2       R    24-bit channel 2 data
-//   0x08  CH3       R    24-bit channel 3 data
-//   0x0C  CH4       R    24-bit channel 4 data
-//   0x10  CH5       R    24-bit channel 5 data
-//   0x14  CH6       R    24-bit channel 6 data
-//   0x18  CH7       R    24-bit channel 7 data
-//   0x1C  CH8       R    24-bit channel 8 data
+//   0x04  CH2       R    24-bit channel 2 data, or CH2 demod output when CTRL[2] is set
+//   0x08  CH3       R    24-bit channel 3 data, or CH3 demod output when CTRL[2] is set
+//   0x0C  CH4       R    24-bit channel 4 data, or CH4 demod output when CTRL[2] is set
+//   0x10  CH5       R    24-bit channel 5 data, or CH5 demod output when CTRL[2] is set
+//   0x14  CH6       R    24-bit channel 6 data, or CH6 demod output when CTRL[2] is set
+//   0x18  CH7       R    24-bit channel 7 data, or CH7 demod output when CTRL[2] is set
+//   0x1C  CH8       R    24-bit channel 8 data, or CH8 demod output when CTRL[2] is set
 //   0x20  STATUS    R    [0] drdy_seen  [1] overflow  [31:16] frame_cnt
 //   0x24  CTRL      R/W  [0] sync_trigger (W1C)  [1] enable  [2] demod_enable
 //   0x28  EXTCLK_DIV R/W half-period in sys-clk cycles (125 MHz / (2*val))

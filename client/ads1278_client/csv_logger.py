@@ -38,12 +38,10 @@ class SampleCsvLogger:
         for idx in self._channel_indices:
             if idx < 0 or idx >= CHANNEL_COUNT:
                 raise ValueError(f"channel index out of range: {idx}")
-        if demod_rate and self._channel_indices != (0,):
-            raise ValueError("demod-rate CSV logging requires CH1 only")
         self._demod_rate_requested = bool(demod_rate)
         self._have_last_demod_row = False
         self._last_demod_frame_cnt = 0
-        self._last_demod_ch1 = 0
+        self._last_demod_channels = [0] * CHANNEL_COUNT
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file: TextIO = self.path.open("w", newline="", encoding="utf-8")
         self._writer = csv.writer(self._file)
@@ -82,7 +80,6 @@ class SampleCsvLogger:
     def _demod_gate_active(self, message: Ads1278Message) -> bool:
         return (
             self._demod_rate_requested
-            and self._channel_indices == (0,)
             and (message.ctrl_raw & 0x6) == 0x6
             and message.mod_div >= 2
         )
@@ -93,10 +90,11 @@ class SampleCsvLogger:
             return True
 
         frame_cnt = message.frame_cnt
-        ch1 = message.channels[0]
+        selected_channels = [message.channels[idx] for idx in self._channel_indices]
         if not self._have_last_demod_row:
             self._last_demod_frame_cnt = frame_cnt
-            self._last_demod_ch1 = ch1
+            for idx in self._channel_indices:
+                self._last_demod_channels[idx] = message.channels[idx]
             self._have_last_demod_row = True
             return True
 
@@ -105,11 +103,15 @@ class SampleCsvLogger:
         ) % FRAME_COUNTER_MODULUS
         if frames_since_last == 0:
             return False
-        if ch1 != self._last_demod_ch1 or frames_since_last >= frames_per_demod(
+        last_selected_channels = [
+            self._last_demod_channels[idx] for idx in self._channel_indices
+        ]
+        if selected_channels != last_selected_channels or frames_since_last >= frames_per_demod(
             message.extclk_div,
             message.mod_div,
         ):
             self._last_demod_frame_cnt = frame_cnt
-            self._last_demod_ch1 = ch1
+            for idx in self._channel_indices:
+                self._last_demod_channels[idx] = message.channels[idx]
             return True
         return False

@@ -10,20 +10,41 @@ reg mod_i = 1'b1;
 reg [23:0] sample = 24'd0;
 reg [15:0] demod_skip = 16'd0;
 wire [31:0] demod_out;
+wire [31:0] unused_demod_out_1;
+wire [31:0] unused_demod_out_2;
+wire [31:0] unused_demod_out_3;
+wire [31:0] unused_demod_out_4;
+wire [31:0] unused_demod_out_5;
+wire [31:0] unused_demod_out_6;
+wire [31:0] unused_demod_out_7;
 
 integer failures = 0;
 
 always #5 clk = ~clk;
 
-ads1278_demod dut (
-    .clk        (clk),
-    .rstn       (rstn),
-    .enable     (enable),
-    .new_data   (new_data),
-    .mod_i      (mod_i),
-    .sample     (sample),
-    .demod_skip (demod_skip),
-    .demod_out  (demod_out)
+ads1278_demod_bank dut (
+    .clk         (clk),
+    .rstn        (rstn),
+    .enable      (enable),
+    .new_data    (new_data),
+    .mod_i       (mod_i),
+    .sample_0    (sample),
+    .sample_1    (24'd0),
+    .sample_2    (24'd0),
+    .sample_3    (24'd0),
+    .sample_4    (24'd0),
+    .sample_5    (24'd0),
+    .sample_6    (24'd0),
+    .sample_7    (24'd0),
+    .demod_skip  (demod_skip),
+    .demod_out_0 (demod_out),
+    .demod_out_1 (unused_demod_out_1),
+    .demod_out_2 (unused_demod_out_2),
+    .demod_out_3 (unused_demod_out_3),
+    .demod_out_4 (unused_demod_out_4),
+    .demod_out_5 (unused_demod_out_5),
+    .demod_out_6 (unused_demod_out_6),
+    .demod_out_7 (unused_demod_out_7)
 );
 
 task send_sample;
@@ -77,9 +98,11 @@ initial begin
     send_sample(1'b1, 32'sd10);
     send_sample(1'b1, 32'sd14);
     send_sample(1'b0, -32'sd1000);
+    repeat (420) @(negedge clk);
     send_sample(1'b0, -32'sd4);
     send_sample(1'b0, -32'sd6);
     send_sample(1'b1, 32'sd20);
+    repeat (420) @(negedge clk);
     expect_demod(32'sd174, "demod_skip=0 includes falling-edge sample");
 
     reset_and_enable(16'd3);
@@ -93,12 +116,14 @@ initial begin
 
     // After the falling edge, these three settling samples must not affect the negative average.
     send_sample(1'b0, -32'sd1000);
+    repeat (420) @(negedge clk);
     send_sample(1'b0, -32'sd1000);
     send_sample(1'b0, -32'sd1000);
     send_sample(1'b0, -32'sd2);
     send_sample(1'b0, -32'sd4);
     send_sample(1'b0, -32'sd6);
     send_sample(1'b1, 32'sd20);
+    repeat (420) @(negedge clk);
     expect_demod(32'sd8, "demod_skip=3 excludes first three post-edge samples");
 
     if (failures == 0) begin
@@ -111,3 +136,19 @@ initial begin
 end
 
 endmodule
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

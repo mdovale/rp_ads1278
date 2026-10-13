@@ -130,7 +130,7 @@ static void test_local_log_commands_validation(void)
     command.value = 0xffu;
     assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
 
-    command.value = ADS1278_LOCAL_LOG_CH1_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG;
+    command.value = (1u << 7) | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG;
     assert(ads1278_command_validate(&command) == ADS1278_CMD_VALID);
 
     command.value = 0x200u;

@@ -72,6 +72,20 @@ static ads1278_bulk_frame sample_bulk_frame(uint32_t frame_count, int32_t ch1)
     return frame;
 }
 
+static ads1278_bulk_frame sample_bulk_frame_with_channel(
+    uint32_t frame_count,
+    unsigned int changed_channel,
+    int32_t value
+)
+{
+    ads1278_bulk_frame frame;
+
+    frame = sample_bulk_frame(frame_count, 1234);
+    assert(changed_channel < ADS1278_CHANNEL_COUNT);
+    frame.channels[changed_channel] = value;
+    return frame;
+}
+
 static void make_temp_dir(char *dir, size_t dir_size)
 {
     int written;
@@ -130,7 +144,7 @@ static void test_demod_rate_start_requires_demod_control(void)
     assert(ads1278_csv_logger_start(
         &logger,
         dir,
-        ADS1278_LOCAL_LOG_CH1_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
+        (1u << 7) | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
         0x00000002u,
         "demod.csv"
     ) != 0);
@@ -152,7 +166,7 @@ static void test_demod_rate_skips_duplicate_ch1_frames(void)
     assert(ads1278_csv_logger_start(
         &logger,
         dir,
-        ADS1278_LOCAL_LOG_CH1_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
+        (1u << 0) | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
         0x00000006u,
         "demod_skip.csv"
     ) == 0);
@@ -183,7 +197,7 @@ static void test_demod_rate_writes_changed_ch1(void)
     assert(ads1278_csv_logger_start(
         &logger,
         dir,
-        ADS1278_LOCAL_LOG_CH1_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
+        (1u << 0) | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
         0x00000006u,
         "demod_change.csv"
     ) == 0);
@@ -214,7 +228,7 @@ static void test_demod_rate_skips_same_frame_even_when_ch1_changes(void)
     assert(ads1278_csv_logger_start(
         &logger,
         dir,
-        ADS1278_LOCAL_LOG_CH1_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
+        (1u << 0) | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
         0x00000006u,
         "demod_same_frame.csv"
     ) == 0);
@@ -228,6 +242,38 @@ static void test_demod_rate_skips_same_frame_even_when_ch1_changes(void)
 
     assert(rows == 1u);
     assert(file_data_row_count(path) == 1u);
+    assert(unlink(path) == 0);
+    assert(rmdir(dir) == 0);
+}
+
+static void test_demod_rate_writes_changed_selected_channel(void)
+{
+    ads1278_csv_logger logger;
+    ads1278_bulk_frame frame;
+    char dir[128];
+    char path[512];
+    uint32_t rows;
+
+    make_temp_dir(dir, sizeof(dir));
+    ads1278_csv_logger_init(&logger);
+    assert(ads1278_csv_logger_start(
+        &logger,
+        dir,
+        ((1u << 1) | (1u << 7)) | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
+        0x00000006u,
+        "demod_selected_change.csv"
+    ) == 0);
+    snprintf(path, sizeof(path), "%s/demod_selected_change.csv", dir);
+
+    frame = sample_bulk_frame_with_channel(1u, 7u, -8000);
+    assert(ads1278_csv_logger_write_bulk_frame(&logger, 220u, 0x6u, 1u, 5120u, &frame) == 0);
+    frame = sample_bulk_frame_with_channel(2u, 7u, -8001);
+    assert(ads1278_csv_logger_write_bulk_frame(&logger, 221u, 0x6u, 1u, 5120u, &frame) == 0);
+    rows = ads1278_csv_logger_close(&logger);
+
+    assert(rows == 2u);
+    assert(file_data_row_count(path) == 2u);
+    assert(file_contains(path, "host_timestamp,msg_seq,frame_cnt,status_raw,ctrl_raw,extclk_div,mod_div,ch2,ch8\n"));
     assert(unlink(path) == 0);
     assert(rmdir(dir) == 0);
 }
@@ -246,7 +292,7 @@ static void test_demod_rate_falls_back_to_full_rate_without_demod_control(void)
     assert(ads1278_csv_logger_start(
         &logger,
         dir,
-        ADS1278_LOCAL_LOG_CH1_ONLY | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
+        (1u << 0) | ADS1278_LOCAL_LOG_DEMOD_RATE_FLAG,
         0x00000006u,
         "demod_full_rate.csv"
     ) == 0);
@@ -272,6 +318,7 @@ int main(void)
     test_demod_rate_skips_duplicate_ch1_frames();
     test_demod_rate_writes_changed_ch1();
     test_demod_rate_skips_same_frame_even_when_ch1_changes();
+    test_demod_rate_writes_changed_selected_channel();
     test_demod_rate_falls_back_to_full_rate_without_demod_control();
     return 0;
 }

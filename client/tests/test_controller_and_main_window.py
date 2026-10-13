@@ -459,7 +459,7 @@ def test_controller_arms_server_timed_usb_csv_without_client_timer(monkeypatch) 
     assert "123 rows" in controller.get_snapshot().status_text
 
 
-def test_controller_sends_demod_rate_bit_for_usb_ch1_logging(monkeypatch) -> None:
+def test_controller_sends_demod_rate_bit_for_usb_selected_channels(monkeypatch) -> None:
     sent_commands = []
 
     class FakeTransportClient:
@@ -489,7 +489,7 @@ def test_controller_sends_demod_rate_bit_for_usb_ch1_logging(monkeypatch) -> Non
 
     controller.start_logging(
         "usb_demod",
-        channel_indices=(0,),
+        channel_indices=(1, 7),
         destination=LogDestination.USB_RED_PITAYA,
         demod_rate=True,
     )
@@ -507,7 +507,7 @@ def test_controller_sends_demod_rate_bit_for_usb_ch1_logging(monkeypatch) -> Non
         pack_mark_capture(),
         pack_set_local_log_duration(None),
         *pack_set_local_log_filename("usb_demod.csv"),
-        pack_start_local_log((0,), demod_rate=True),
+        pack_start_local_log((1, 7), demod_rate=True),
     ]
 
 
@@ -537,7 +537,7 @@ def test_controller_rejects_usb_demod_rate_without_demod_ctrl(monkeypatch) -> No
     with pytest.raises(RuntimeError, match="acquisition \\+ demod"):
         controller.start_logging(
             "usb_demod",
-            channel_indices=(0,),
+            channel_indices=(7,),
             destination=LogDestination.USB_RED_PITAYA,
             demod_rate=True,
         )
@@ -745,7 +745,7 @@ def test_main_window_requires_at_least_one_selected_channel(monkeypatch) -> None
         app.processEvents()
 
 
-def test_main_window_passes_demod_rate_only_for_ch1_logging(monkeypatch) -> None:
+def test_main_window_passes_demod_rate_for_selected_channels(monkeypatch) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     calls = []
     snapshot = ControllerSnapshot(
@@ -813,7 +813,7 @@ def test_main_window_passes_demod_rate_only_for_ch1_logging(monkeypatch) -> None
         window.csv_destination_combo.setCurrentText("This computer")
         for idx, checkbox in enumerate(window._channel_checkboxes):
             checkbox.blockSignals(True)
-            checkbox.setChecked(idx == 0)
+            checkbox.setChecked(idx in (1, 7))
             checkbox.blockSignals(False)
         window._sync_demod_rate_checkbox()
 
@@ -823,13 +823,13 @@ def test_main_window_passes_demod_rate_only_for_ch1_logging(monkeypatch) -> None
         window._start_logging()
 
         assert calls
-        assert calls[-1][2] == (0,)
+        assert calls[-1][2] == (1, 7)
         assert calls[-1][-1] is True
 
-        window._channel_checkboxes[1].setChecked(True)
-        window._on_channel_toggled(1, True)
-        assert window.csv_demod_rate_checkbox.isEnabled() is False
-        assert window.csv_demod_rate_checkbox.isChecked() is False
+        window._channel_checkboxes[0].setChecked(True)
+        window._on_channel_toggled(0, True)
+        assert window.csv_demod_rate_checkbox.isEnabled() is True
+        assert window.csv_demod_rate_checkbox.isChecked() is True
     finally:
         window.close()
         app.processEvents()

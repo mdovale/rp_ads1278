@@ -201,8 +201,6 @@ class ClientController:
             logging_path = usb_csv_path_hint(normalized_filename)
         duration = self._normalize_logging_duration(duration_s)
         indices = self._normalize_channel_indices(channel_indices)
-        if demod_rate and indices != (0,):
-            raise ValueError("demod-rate CSV logging requires CH1 only")
         with self._lock:
             if not self._connected:
                 raise RuntimeError("must be connected before starting CSV capture")

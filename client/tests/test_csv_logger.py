@@ -15,6 +15,7 @@ def _sample_message(
     extclk_div: int = 1,
     mod_div: int = 5120,
     ch1: int = 1,
+    ch2: int = -2,
     ch8: int = -8,
 ):
     return parse_message(
@@ -27,7 +28,7 @@ def _sample_message(
             ctrl_raw,
             extclk_div,
             mod_div,
-            [ch1, -2, 3, -4, 5, -6, 7, ch8],
+            [ch1, ch2, 3, -4, 5, -6, 7, ch8],
         )
     )
 
@@ -92,13 +93,13 @@ def test_csv_logger_rejects_empty_channel_selection(tmp_path) -> None:
         SampleCsvLogger(tmp_path / "empty.csv", channel_indices=())
 
 
-def test_csv_logger_rejects_demod_rate_without_ch1_only(tmp_path) -> None:
-    with pytest.raises(ValueError, match="CH1 only"):
-        SampleCsvLogger(
-            tmp_path / "bad_demod.csv",
-            channel_indices=(0, 7),
-            demod_rate=True,
-        )
+def test_csv_logger_allows_demod_rate_for_selected_channels(tmp_path) -> None:
+    logger = SampleCsvLogger(
+        tmp_path / "demod_any_channel.csv",
+        channel_indices=(1, 7),
+        demod_rate=True,
+    )
+    logger.close()
 
 
 def test_csv_logger_demod_rate_skips_duplicate_ch1_frames(tmp_path) -> None:
@@ -128,6 +129,23 @@ def test_csv_logger_demod_rate_writes_changed_ch1(tmp_path) -> None:
         rows = list(csv.reader(handle))
 
     assert [row[1] for row in rows[1:]] == ["1", "2"]
+
+
+def test_csv_logger_demod_rate_writes_changed_selected_channel(tmp_path) -> None:
+    path = tmp_path / "demod_changed_selected.csv"
+
+    logger = SampleCsvLogger(path, channel_indices=(1, 7), demod_rate=True)
+    logger.write_sample(_sample_message(msg_seq=1, frame_cnt=1, ch2=1234, ch8=-8000))
+    logger.write_sample(_sample_message(msg_seq=2, frame_cnt=2, ch2=1234, ch8=-8001))
+    logger.close()
+
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+
+    assert rows[0] == SampleCsvLogger.METADATA_HEADER + ["ch2", "ch8"]
+    assert [row[1] for row in rows[1:]] == ["1", "2"]
+    assert rows[1][7:] == ["1234", "-8000"]
+    assert rows[2][7:] == ["1234", "-8001"]
 
 
 def test_csv_logger_demod_rate_falls_back_to_full_rate_without_demod_ctrl(tmp_path) -> None:

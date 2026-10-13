@@ -47,12 +47,14 @@ localparam integer DMA_FIFO_LEVEL_W = $clog2(DMA_FIFO_DEPTH + 1);
 // Internal 24-bit channel data from SPI TDM
 wire [23:0] spi_ch0, spi_ch1, spi_ch2, spi_ch3;
 wire [23:0] spi_ch4, spi_ch5, spi_ch6, spi_ch7;
-wire [23:0] spi_ch0_effective;
+wire [23:0] spi_ch0_effective, spi_ch1_effective, spi_ch2_effective, spi_ch3_effective;
+wire [23:0] spi_ch4_effective, spi_ch5_effective, spi_ch6_effective, spi_ch7_effective;
 wire        spi_new_data;
 wire [15:0] spi_frame_cnt;
 wire        spi_overflow;
 wire [31:0] dma_status_raw;
-wire [31:0] demod_ch1;
+wire [31:0] demod_ch0, demod_ch1, demod_ch2, demod_ch3;
+wire [31:0] demod_ch4, demod_ch5, demod_ch6, demod_ch7;
 
 // FIFO state for staged DMA bring-up
 wire [319:0] fifo_frame_in;
@@ -66,13 +68,13 @@ reg  [31:0] fifo_drop_count_reg;
 
 // Zero-extend 24-bit data to 32-bit registers
 assign ch_data_0 = {8'd0, spi_ch0_effective};
-assign ch_data_1 = {8'd0, spi_ch1};
-assign ch_data_2 = {8'd0, spi_ch2};
-assign ch_data_3 = {8'd0, spi_ch3};
-assign ch_data_4 = {8'd0, spi_ch4};
-assign ch_data_5 = {8'd0, spi_ch5};
-assign ch_data_6 = {8'd0, spi_ch6};
-assign ch_data_7 = {8'd0, spi_ch7};
+assign ch_data_1 = {8'd0, spi_ch1_effective};
+assign ch_data_2 = {8'd0, spi_ch2_effective};
+assign ch_data_3 = {8'd0, spi_ch3_effective};
+assign ch_data_4 = {8'd0, spi_ch4_effective};
+assign ch_data_5 = {8'd0, spi_ch5_effective};
+assign ch_data_6 = {8'd0, spi_ch6_effective};
+assign ch_data_7 = {8'd0, spi_ch7_effective};
 
 assign dma_status_raw = {spi_frame_cnt, 14'd0, spi_overflow, spi_new_data};
 assign status = dma_status_raw;
@@ -89,26 +91,47 @@ assign fifo_frame_in = {
     {16'd0, spi_frame_cnt},
     dma_status_raw,
     {{8{spi_ch0_effective[23]}}, spi_ch0_effective},
-    {{8{spi_ch1[23]}}, spi_ch1},
-    {{8{spi_ch2[23]}}, spi_ch2},
-    {{8{spi_ch3[23]}}, spi_ch3},
-    {{8{spi_ch4[23]}}, spi_ch4},
-    {{8{spi_ch5[23]}}, spi_ch5},
-    {{8{spi_ch6[23]}}, spi_ch6},
-    {{8{spi_ch7[23]}}, spi_ch7}
+    {{8{spi_ch1_effective[23]}}, spi_ch1_effective},
+    {{8{spi_ch2_effective[23]}}, spi_ch2_effective},
+    {{8{spi_ch3_effective[23]}}, spi_ch3_effective},
+    {{8{spi_ch4_effective[23]}}, spi_ch4_effective},
+    {{8{spi_ch5_effective[23]}}, spi_ch5_effective},
+    {{8{spi_ch6_effective[23]}}, spi_ch6_effective},
+    {{8{spi_ch7_effective[23]}}, spi_ch7_effective}
 };
 
-assign spi_ch0_effective = demod_enable ? demod_ch1[23:0] : spi_ch0;
+assign spi_ch0_effective = demod_enable ? demod_ch0[23:0] : spi_ch0;
+assign spi_ch1_effective = demod_enable ? demod_ch1[23:0] : spi_ch1;
+assign spi_ch2_effective = demod_enable ? demod_ch2[23:0] : spi_ch2;
+assign spi_ch3_effective = demod_enable ? demod_ch3[23:0] : spi_ch3;
+assign spi_ch4_effective = demod_enable ? demod_ch4[23:0] : spi_ch4;
+assign spi_ch5_effective = demod_enable ? demod_ch5[23:0] : spi_ch5;
+assign spi_ch6_effective = demod_enable ? demod_ch6[23:0] : spi_ch6;
+assign spi_ch7_effective = demod_enable ? demod_ch7[23:0] : spi_ch7;
 
-ads1278_demod u_demod_ch1 (
-    .clk       (clk),
-    .rstn      (rstn),
-    .enable    (ctrl_enable && demod_enable),
-    .new_data  (spi_new_data),
-    .mod_i     (mod_i),
-    .sample    (spi_ch0),
-    .demod_skip(demod_skip),
-    .demod_out (demod_ch1)
+ads1278_demod_bank u_demod_bank (
+    .clk         (clk),
+    .rstn        (rstn),
+    .enable      (ctrl_enable && demod_enable),
+    .new_data    (spi_new_data),
+    .mod_i       (mod_i),
+    .sample_0    (spi_ch0),
+    .sample_1    (spi_ch1),
+    .sample_2    (spi_ch2),
+    .sample_3    (spi_ch3),
+    .sample_4    (spi_ch4),
+    .sample_5    (spi_ch5),
+    .sample_6    (spi_ch6),
+    .sample_7    (spi_ch7),
+    .demod_skip  (demod_skip),
+    .demod_out_0 (demod_ch0),
+    .demod_out_1 (demod_ch1),
+    .demod_out_2 (demod_ch2),
+    .demod_out_3 (demod_ch3),
+    .demod_out_4 (demod_ch4),
+    .demod_out_5 (demod_ch5),
+    .demod_out_6 (demod_ch6),
+    .demod_out_7 (demod_ch7)
 );
 
 ads1278_frame_fifo #(

@@ -20,13 +20,13 @@ The current register map is:
 | Offset | Name | Access | Current behavior |
 |------|------|------|------|
 | `0x00` | `CH1` | R | Channel 1 sample, or CH1 demod output when `CTRL[2]` is set |
-| `0x04` | `CH2` | R | Channel 2 sample |
-| `0x08` | `CH3` | R | Channel 3 sample |
-| `0x0C` | `CH4` | R | Channel 4 sample |
-| `0x10` | `CH5` | R | Channel 5 sample |
-| `0x14` | `CH6` | R | Channel 6 sample |
-| `0x18` | `CH7` | R | Channel 7 sample |
-| `0x1C` | `CH8` | R | Channel 8 sample, zero-extended from 24 bits into bits `[23:0]` |
+| `0x04` | `CH2` | R | Channel 2 sample, or CH2 demod output when `CTRL[2]` is set |
+| `0x08` | `CH3` | R | Channel 3 sample, or CH3 demod output when `CTRL[2]` is set |
+| `0x0C` | `CH4` | R | Channel 4 sample, or CH4 demod output when `CTRL[2]` is set |
+| `0x10` | `CH5` | R | Channel 5 sample, or CH5 demod output when `CTRL[2]` is set |
+| `0x14` | `CH6` | R | Channel 6 sample, or CH6 demod output when `CTRL[2]` is set |
+| `0x18` | `CH7` | R | Channel 7 sample, or CH7 demod output when `CTRL[2]` is set |
+| `0x1C` | `CH8` | R | Channel 8 sample, or CH8 demod output when `CTRL[2]` is set |
 | `0x20` | `STATUS` | R | Bit `0` = `new_data`, bit `1` = `overflow`, bits `[31:16]` = `frame_cnt` |
 | `0x24` | `CTRL` | R/W | Bit `0` = `sync_trigger`, bit `1` = acquisition enable, bit `2` = demod enable |
 | `0x28` | `EXTCLK_DIV` | R/W | Shared half-period divider used by the current clocking path |
@@ -46,14 +46,14 @@ The current register map is:
 | `0x60` | `DMA_BUF_STATUS` | R | Ping-pong ownership: bit `0` = buffer 0 full, bit `1` = buffer 1 full, bit `2` = active hardware buffer, bit `3` = overwrite pending |
 | `0x64` | `DMA_BUF_ACK` | W1C | Software-consumed buffer acknowledgement: bit `0` clears buffer 0 full, bit `1` clears buffer 1 full |
 | `0x68` | `DMA_OVERWRITE_COUNT` | R | Count of times DMA advanced into a buffer still marked full |
-| `0x6C` | `DEMOD_SKIP` | R/W | Bits `[15:0]` = number of ADC samples to skip after each MOD edge before CH1 contributes to the demod half-cycle average |
+| `0x6C` | `DEMOD_SKIP` | R/W | Bits `[15:0]` = number of ADC samples to skip after each MOD edge before each channel contributes to its demod half-cycle average |
 
 Current read and write semantics:
 
-- Reading `CH1` through `CH8` returns the last latched 24-bit sample for each channel, zero-extended to 32 bits.
+- Reading `CH1` through `CH8` returns the last latched 24-bit sample for each channel, zero-extended to 32 bits. When demod is enabled, each register returns that channel's own demodulated value in the same 24-bit field.
 - Reading `STATUS` returns the current `new_data` pulse, overflow flag, and 16-bit frame counter.
 - Writing `CTRL[1] = 1` enables acquisition and clock generation. Clearing it disables both.
-- Writing `CTRL[2] = 1` replaces CH1 with the held half-cycle demod output computed from raw CH1. Clearing it restores raw CH1. CH8 remains raw in both states.
+- Writing `CTRL[2] = 1` replaces each channel with the held half-cycle demod output computed from that channel's own raw input. Clearing it restores raw output on every channel. The demod path uses per-channel accumulators with one shared iterative divider, so register-visible demod updates can lag the observed MOD-edge frame by a bounded sub-frame latency.
 - Writing `CTRL[0] = 1` triggers a one-shot `SYNC` pulse. The bit auto-clears in hardware on the next bus clock.
 - `EXTCLK_DIV` resets to `625` (`0x271`), which corresponds to a nominal `100 kHz` output from a `125 MHz` input clock using the current divider formula.
 - `FIFO_STATUS` reports staged DMA FIFO occupancy for bring-up and debug without changing the legacy MMIO latest-sample path.
@@ -88,7 +88,7 @@ Control and data flow are:
 3. Those control signals feed `ads1278_acq_top`, which owns the acquisition datapath.
 4. `ads1278_acq_top` instantiates:
    - `ads1278_frame_fifo` for staged DMA buffering
-   - `ads1278_demod` for CH1 half-cycle demod output on CH1 when enabled
+   - one `ads1278_demod_bank` with per-channel accumulators and a shared `ads1278_demod_divider` for half-cycle demod output when enabled
    - `ads1278_spi_tdm` for DRDY-triggered 8 x 24-bit capture
    - `ads1278_extclk_gen` for the ADC external clock
    - `ads1278_sync_pulse` for active-low `SYNC`
@@ -104,7 +104,7 @@ Reset and lifecycle notes:
 - `CTRL` resets to `0`, so acquisition starts disabled.
 - `EXTCLK_DIV` resets to `625`.
 - `MOD_DIV` resets to `6,250,000`, so the modulation output starts at `10 Hz`. Writing `0` holds the output high.
-- `DEMOD_SKIP` resets to `0`, so CH1 demod includes every raw CH1 sample until software writes a calibrated skip count.
+- `DEMOD_SKIP` resets to `0`, so demod includes every raw sample until software writes a calibrated skip count.
 - `frame_cnt` resets to `0` when acquisition is disabled.
 - `overflow` is cleared when acquisition is disabled.
 - The channel registers update only when a full 192-bit frame is captured and latched.
@@ -124,6 +124,8 @@ Reset and lifecycle notes:
 |------|------|
 | AXI slave register definition | `fpga/rtl/ads1278_axi_slave.sv` |
 | Acquisition wrapper | `fpga/rtl/ads1278_acq_top.v` |
+| Shared demod bank | `fpga/rtl/ads1278_demod_bank.v` |
+| Shared demod divider | `fpga/rtl/ads1278_demod_divider.v` |
 | Staged DMA FIFO | `fpga/rtl/ads1278_frame_fifo.v` |
 | SPI TDM capture | `fpga/rtl/ads1278_spi_tdm.v` |
 | EXTCLK generation | `fpga/rtl/ads1278_extclk_gen.v` |
