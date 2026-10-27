@@ -1,7 +1,7 @@
 # Demod sample-rate discrepancy handoff
 
 **Date:** 2026-10-13  
-**Status:** **Open** — offline CSV analysis done. Demod itself is one update per 10 Hz MOD cycle. Demod-rate CSV logging writes that update four times. No code change yet.  
+**Status:** **Superseded by fix plan / implementation handoff** — offline CSV analysis done. Demod itself is one update per 10 Hz MOD cycle. Demod-rate CSV logging writes that update four times. See [`20261027_demod-rate-backwards-frame.md`](20261027_demod-rate-backwards-frame.md) for the backwards-frame gate fix and remaining DMA-order follow-up.  
 **Evidence:** `logged_files/test_ch1_09102026.csv` (server USB/local CSV, channel 1 only)  
 **Prior context:** [`20260622_demodulation-plan.md`](20260622_demodulation-plan.md), [`20260612_usb-csv-logging.md`](20260612_usb-csv-logging.md), [`docs/feats/server-protocol.md`](../feats/server-protocol.md)
 

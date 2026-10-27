@@ -116,18 +116,111 @@ def test_csv_logger_demod_rate_skips_duplicate_ch1_frames(tmp_path) -> None:
     assert [row[1] for row in rows[1:]] == ["1", "11"]
 
 
+def test_csv_logger_demod_rate_ignores_backwards_frame_replay(tmp_path) -> None:
+    path = tmp_path / "demod_rewind.csv"
+
+    samples = [
+        (59088740, 42380, -2572),
+        (59089018, 42146, -2574),
+        (59089019, 42659, -2572),
+        (59089530, 42658, -2572),
+        (59091181, 44821, -2574),
+    ]
+
+    logger = SampleCsvLogger(path, channel_indices=(0,), demod_rate=True)
+    for msg_seq, frame_cnt, ch1 in samples:
+        logger.write_sample(
+            _sample_message(
+                msg_seq=msg_seq,
+                frame_cnt=frame_cnt,
+                extclk_div=5,
+                mod_div=6_250_000,
+                ch1=ch1,
+            )
+        )
+    logger.close()
+
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+
+    assert [row[1] for row in rows[1:]] == ["59088740", "59091181"]
+    assert [row[2] for row in rows[1:]] == ["42380", "44821"]
+    assert [row[7] for row in rows[1:]] == ["-2572", "-2574"]
+
+
 def test_csv_logger_demod_rate_writes_changed_ch1(tmp_path) -> None:
     path = tmp_path / "demod_changed.csv"
 
     logger = SampleCsvLogger(path, channel_indices=(0,), demod_rate=True)
     logger.write_sample(_sample_message(msg_seq=1, frame_cnt=1, ch1=1234))
-    logger.write_sample(_sample_message(msg_seq=2, frame_cnt=2, ch1=1235))
+    logger.write_sample(_sample_message(msg_seq=2, frame_cnt=10, ch1=1235))
     logger.close()
 
     with path.open("r", newline="", encoding="utf-8") as handle:
         rows = list(csv.reader(handle))
 
     assert [row[1] for row in rows[1:]] == ["1", "2"]
+
+
+def test_csv_logger_demod_rate_ignores_too_soon_forward_replay(tmp_path) -> None:
+    path = tmp_path / "demod_forward_replay.csv"
+
+    samples = [
+        (2469574, 19380, -2762),
+        (2469668, 19474, -2764),
+        (2469669, 19476, -2762),
+        (2472011, 21822, -2759),
+    ]
+
+    logger = SampleCsvLogger(path, channel_indices=(0,), demod_rate=True)
+    for msg_seq, frame_cnt, ch1 in samples:
+        logger.write_sample(
+            _sample_message(
+                msg_seq=msg_seq,
+                frame_cnt=frame_cnt,
+                extclk_div=5,
+                mod_div=6_250_000,
+                ch1=ch1,
+            )
+        )
+    logger.close()
+
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+
+    assert [row[1] for row in rows[1:]] == ["2469574", "2472011"]
+    assert [row[2] for row in rows[1:]] == ["19380", "21822"]
+    assert [row[7] for row in rows[1:]] == ["-2762", "-2759"]
+
+
+def test_csv_logger_demod_rate_ignores_half_period_replay(tmp_path) -> None:
+    path = tmp_path / "demod_half_replay.csv"
+
+    samples = [
+        (1073625, 724, -2761),
+        (1074843, 1944, -2757),
+        (1076063, 3166, -2758),
+    ]
+
+    logger = SampleCsvLogger(path, channel_indices=(0,), demod_rate=True)
+    for msg_seq, frame_cnt, ch1 in samples:
+        logger.write_sample(
+            _sample_message(
+                msg_seq=msg_seq,
+                frame_cnt=frame_cnt,
+                extclk_div=5,
+                mod_div=6_250_000,
+                ch1=ch1,
+            )
+        )
+    logger.close()
+
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+
+    assert [row[1] for row in rows[1:]] == ["1073625", "1076063"]
+    assert [row[2] for row in rows[1:]] == ["724", "3166"]
+    assert [row[7] for row in rows[1:]] == ["-2761", "-2758"]
 
 
 def test_csv_logger_demod_rate_falls_back_to_full_rate_without_demod_ctrl(tmp_path) -> None:

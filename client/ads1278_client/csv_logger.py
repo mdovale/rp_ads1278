@@ -103,12 +103,13 @@ class SampleCsvLogger:
         frames_since_last = (
             frame_cnt - self._last_demod_frame_cnt
         ) % FRAME_COUNTER_MODULUS
-        if frames_since_last == 0:
+        if frames_since_last == 0 or frames_since_last > FRAME_COUNTER_MODULUS // 2:
             return False
-        if ch1 != self._last_demod_ch1 or frames_since_last >= frames_per_demod(
-            message.extclk_div,
-            message.mod_div,
-        ):
+        demod_frames = frames_per_demod(message.extclk_div, message.mod_div)
+        min_frames_between_rows = demod_frames - (demod_frames // 10)
+        if frames_since_last < min_frames_between_rows:
+            return False
+        if ch1 != self._last_demod_ch1 or frames_since_last >= demod_frames:
             self._last_demod_frame_cnt = frame_cnt
             self._last_demod_ch1 = ch1
             return True

@@ -85,7 +85,7 @@ The USB CSV workflow is:
 1. Mount the flash stick at `/mnt/usb`.
 2. Run `/root/ads1278-server --dma-bulk --poll-ms 0 --log-dir /mnt/usb/ads1278/logs`, preferably through systemd.
 3. The client sends `MARK_CAPTURE`, `SET_LOCAL_LOG_DURATION`, optional `SET_LOCAL_LOG_FILENAME` chunks, and `START_LOCAL_LOG`.
-4. The server writes rows for legacy samples, DMA samples, or expanded DMA bulk frames. With demod-rate CH1 logging requested, it writes only the first row, CH1 changes, or the elapsed demod frame interval.
+4. The server writes rows for legacy samples, DMA samples, or expanded DMA bulk frames. With demod-rate CH1 logging requested, it writes only the first row, CH1 changes after at least 90% of the demod frame interval, or the full elapsed demod frame interval; backwards `frame_cnt` rows and too-soon forward replays are ignored and do not replace the last logged value.
 5. If the log is timed and the client disconnects, the server keeps servicing acquisition without a client until the deadline.
 6. On deadline, `STOP_LOCAL_LOG`, server shutdown, or manual disconnect for untimed logs, the CSV is flushed and closed.
 

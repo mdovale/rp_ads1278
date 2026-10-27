@@ -79,6 +79,7 @@ static bool ads1278_csv_logger_should_write_row(
 )
 {
     uint32_t frames_per_demod;
+    uint32_t min_frames_between_demod_rows;
     uint32_t frames_since_last_row;
     int32_t ch1;
 
@@ -96,8 +97,12 @@ static bool ads1278_csv_logger_should_write_row(
     }
 
     frames_per_demod = ads1278_frames_per_demod(extclk_div, mod_div);
+    min_frames_between_demod_rows = frames_per_demod - (frames_per_demod / 10u);
     frames_since_last_row = (frame_cnt - logger->last_demod_frame_cnt) & 0xffffu;
-    if (frames_since_last_row == 0u) {
+    if (frames_since_last_row == 0u || frames_since_last_row > 32768u) {
+        return false;
+    }
+    if (frames_since_last_row < min_frames_between_demod_rows) {
         return false;
     }
     if (ch1 != logger->last_demod_ch1 || frames_since_last_row >= frames_per_demod) {
