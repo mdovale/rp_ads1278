@@ -314,11 +314,19 @@ clean_work_dirs_remote() {
 sync_remote_repo() {
   local target="$1"
   local remote_dir_escaped="${REMOTE_DIR// /\\ }"
-  echo -e "${BLUE}Syncing repo to remote...${NC}"
+  echo -e "${BLUE}Syncing repo to remote (FPGA sources only)...${NC}"
   ssh -p "$REMOTE_PORT" "$target" "mkdir -p '$REMOTE_DIR'"
   if command -v rsync &>/dev/null; then
-    rsync -az \
+    rsync -azv \
       --exclude ".DS_Store" \
+      --exclude ".git/" \
+      --exclude ".venv/" \
+      --exclude "logged_files/" \
+      --exclude "notebooks/" \
+      --exclude "data-loss-test/" \
+      --exclude "reference/" \
+      --exclude "*.csv" \
+      --exclude "*.pdf" \
       --exclude "fpga/work" \
       --exclude "fpga/work125_14" \
       --exclude "fpga/.Xil" \
